@@ -1,10 +1,15 @@
 import re
 import time
-import logging
+import logging as log
 import aexpect
 
 from virttest import virsh
 from virttest.utils_test import libvirt as utlv
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -125,6 +130,8 @@ def run(test, params, env):
                                      event_timeout=net_event_timeout,
                                      options=net_event_option, **virsh_dargs)
             utlv.check_exit_status(result, status_error)
+
+        time.sleep(1)
 
         if not status_error:
             # Verify 'lifecycle' events

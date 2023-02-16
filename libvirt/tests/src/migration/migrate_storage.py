@@ -1,5 +1,5 @@
 import os
-import logging
+import logging as log
 import time
 
 from avocado.utils import process
@@ -15,6 +15,11 @@ from virttest.libvirt_xml import vm_xml
 from virttest.utils_test import libvirt
 from virttest.utils_libvirt import libvirt_config
 from virttest.utils_libvirt import libvirt_network
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -213,6 +218,9 @@ def run(test, params, env):
             if cancel_migration:
                 action_during_mig = None
             extra_args["status_error"] = "no"
+            if params.get("virsh_migrate_extra_mig_again"):
+                extra = params.get("virsh_migrate_extra_mig_again")
+                extra = "{} {}".format(extra, copy_storage_option)
             migration_test.do_migration(vms, None, dest_uri, 'orderly',
                                         options, thread_timeout=1200,
                                         ignore_status=True,
@@ -223,7 +231,7 @@ def run(test, params, env):
 
             mig_result = migration_test.ret
         if int(mig_result.exit_status) == 0:
-            migration_test.ping_vm(vm, params, uri=dest_uri)
+            migration_test.post_migration_check([vm], params, dest_uri=dest_uri)
 
         if check_str_local_log:
             libvirt.check_logfile(check_str_local_log, log_file)

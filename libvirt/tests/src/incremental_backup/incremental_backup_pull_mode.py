@@ -1,4 +1,4 @@
-import logging
+import logging as log
 import os
 import re
 import signal
@@ -12,12 +12,17 @@ from virttest import utils_backup
 from virttest import utils_disk
 from virttest import utils_libvirtd
 from virttest import utils_misc
-from virttest import utils_secret
 from virttest import virsh
 from virttest.libvirt_xml import vm_xml
-from virttest.utils_test import libvirt
 from virttest.utils_config import LibvirtQemuConfig
 from virttest.utils_conn import TLSConnection
+from virttest.utils_libvirt import libvirt_secret
+from virttest.utils_test import libvirt
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -110,8 +115,10 @@ def run(test, params, env):
                           "server_pwd": tls_server_pwd,
                           }
             if custom_pki_path:
-                pki_path = os.path.join(tmp_dir, "inc_bkup_pki")
+                pki_path = params.get("backup_pki_path", "/etc/pki/custom_dir/")
             else:
+                # "/etc/pki/libvirt-backup/" is the default dir to store tls
+                # certs for pull mode backup job
                 pki_path = "/etc/pki/libvirt-backup/"
             if tls_x509_verify:
                 tls_config["client_ip"] = tls_client_ip
@@ -131,7 +138,7 @@ def run(test, params, env):
 
         # Prepare libvirt secret
         if scratch_luks_encrypted:
-            utils_secret.clean_up_secrets()
+            libvirt_secret.clean_up_secrets()
             luks_secret_uuid = libvirt.create_secret(params)
             virsh.secret_set_value(luks_secret_uuid, luks_passphrase,
                                    encode=True, debug=True)

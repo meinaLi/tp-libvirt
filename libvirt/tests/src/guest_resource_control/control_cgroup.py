@@ -1,4 +1,4 @@
-import logging
+import logging as log
 import math
 import os
 import re
@@ -13,6 +13,11 @@ from virttest import virsh
 from virttest.libvirt_cgroup import CgroupTest
 
 from avocado.utils import process
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -278,7 +283,7 @@ def run(test, params, env):
                                   "The cgroup info is:%s",
                                   virsh_input_info, virsh_output_info,
                                   cgroup_info)
-                    if not(is_subset_dict(virsh_output_info, cgroup_info)
+                    if not (is_subset_dict(virsh_output_info, cgroup_info)
                             and is_subset_dict(virsh_input_info, virsh_output_info)):
                         test.fail("memtune checking failed.")
                 # Following are testing schedinfo
@@ -288,7 +293,7 @@ def run(test, params, env):
                                   "The cgroup info is:%s",
                                   virsh_input_info, virsh_output_info,
                                   cgroup_info)
-                    if not(is_subset_dict(cgroup_info, virsh_output_info)
+                    if not (is_subset_dict(cgroup_info, virsh_output_info)
                             and is_subset_dict(virsh_input_info, virsh_output_info)):
                         test.fail("schedinfo checking failed.")
             else:

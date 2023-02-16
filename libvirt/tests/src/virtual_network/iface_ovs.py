@@ -1,17 +1,28 @@
-import logging
+import logging as log
+import ast
+import os
+import re
 import shutil
 
 from avocado.utils import distro
 from avocado.utils import process
 
+from virttest import data_dir
 from virttest import virt_vm
 from virttest import virsh
 from virttest import utils_net
 from virttest import utils_package
+from virttest import libvirt_version
 from virttest.staging import service
 from virttest.utils_test import libvirt
+from virttest.utils_libvirt import libvirt_vmxml
 from virttest.libvirt_xml import vm_xml
 from virttest.libvirt_xml.network_xml import NetworkXML
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -41,33 +52,6 @@ def run(test, params, env):
     if not ovs_service.status():
         logging.debug("Restart %s service.." % pkg)
         ovs_service.restart()
-
-    def modify_iface_xml():
-        """
-        Modify interface xml options
-        """
-        vmxml = vm_xml.VMXML.new_from_dumpxml(vm_name)
-        xml_devices = vmxml.devices
-        iface_index = xml_devices.index(
-            xml_devices.by_device_tag("interface")[0])
-        iface = xml_devices[iface_index]
-
-        iface_type = params.get("iface_type")
-        if iface_type:
-            iface.type_name = iface_type
-        source = eval(iface_source)
-        if source:
-            del iface.source
-            iface.source = source
-        iface_model = params.get("iface_model", "virtio")
-        iface.model = iface_model
-        iface_virtualport = params.get("iface_virtualport")
-        if iface_virtualport:
-            iface.virtualport_type = iface_virtualport
-        logging.debug("New interface xml file: %s", iface)
-        vmxml.devices = xml_devices
-        vmxml.xmltreefile.write()
-        vmxml.sync()
 
     def check_ovs_port(ifname, brname):
         """
@@ -103,6 +87,7 @@ def run(test, params, env):
                             "native-%s" % mode_info[1])
 
     start_error = "yes" == params.get("start_error", "no")
+    status_error = "yes" == params.get("status_error", "no")
 
     # network specific attributes.
     net_name = params.get("net_name", "default")
@@ -111,7 +96,20 @@ def run(test, params, env):
     create_network = "yes" == params.get("create_network", "no")
     change_iface_option = "yes" == params.get("change_iface_option", "no")
     test_ovs_port = "yes" == params.get("test_ovs_port", "no")
+    iface_inbound = params.get("iface_bandwidth_inbound")
+    iface_outbound = params.get("iface_bandwidth_outbound")
+    test_qos = "yes" == params.get("test_qos", "no")
+    hotplug = "yes" == params.get("hotplug", "no")
+    detach = "yes" == params.get("detach", "no")
+    attach_type = params.get("attach_type", "device")
+    detach_type = params.get("detach_type")
+    iface_type = params.get("iface_type", "bridge")
+    iface_model = params.get("iface_model", "virtio")
+    iface_virtualport = params.get("iface_virtualport")
+    live_add_qos = "yes" == params.get("live_add_qos", 'no')
+    check_point = params.get("check_point", "")
 
+    libvirt_version.is_libvirt_feature_supported(params)
     # Destroy the guest first
     if vm.is_alive():
         vm.destroy(gracefully=False)
@@ -140,17 +138,69 @@ def run(test, params, env):
                 if "bridge" in source:
                     if not utils_net.ovs_br_exists(source["bridge"]):
                         utils_net.add_ovs_bridge(source["bridge"])
-            modify_iface_xml()
+                    if "port" in source:
+                        utils_net.add_to_bridge(source["port"], source["bridge"])
+            iface_dict = {'type': iface_type, 'model': iface_model,
+                          'source': iface_source,
+                          'virtualport_type': iface_virtualport,
+                          'inbound': iface_inbound,
+                          'outbound': iface_outbound}
+            if live_add_qos:
+                iface_dict.pop('inbound')
+                iface_dict.pop('outbound')
+            if not hotplug:
+                libvirt.modify_vm_iface(vm_name, 'update_iface', iface_dict)
+            else:
+                iface_attach_xml = os.path.join(data_dir.get_data_dir(), "iface_attach.xml")
+                shutil.copyfile(libvirt.modify_vm_iface(vm_name, 'get_xml', iface_dict), iface_attach_xml)
+                libvirt_vmxml.remove_vm_devices_by_type(vm, 'interface')
 
         try:
             # Start the VM.
             vm.start()
             if start_error:
                 test.fail("VM started unexpectedly")
-
+            if hotplug:
+                if attach_type == "interface":
+                    options = "--type %s --source %s --model %s" % (iface_type, source["bridge"], iface_model)
+                    attach_interface_result = virsh.attach_interface(vm_name, options,
+                                                                     ignore_status=True, debug=True)
+                    libvirt.check_result(attach_interface_result, expected_fails=check_point)
+                else:
+                    virsh.attach_device(vm_name, iface_attach_xml, debug=True,
+                                        ignore_status=False)
+                    iface_xml = vm_xml.VMXML.new_from_dumpxml(vm.name).devices.by_device_tag("interface")[0]
+                    source_bridge = libvirt.get_interface_details(vm_name)[0]['source']
+                    if source_bridge != source["bridge"]:
+                        test.fail("Attach-device failed, the source bridge shoule be: %s, and now is: %s"
+                                  % (source["bridge"], source_bridge))
             iface_name = libvirt.get_ifname_host(vm_name, iface_mac)
             if test_ovs_port:
                 check_ovs_port(iface_name, bridge_name)
+            if live_add_qos:
+                inbound_opt = ",".join(re.findall(r'[0-9]+', iface_inbound))
+                outbount_opt = ",".join(re.findall(r'[0-9]+', iface_outbound))
+                virsh.domiftune(vm_name, iface_name, inbound=inbound_opt,
+                                outbound=outbount_opt, debug=True,
+                                ignore_status=False)
+            if test_qos:
+                iface_mac = vm_xml.VMXML.get_first_mac_by_name(vm_name)
+                tap_name = libvirt.get_ifname_host(vm_name, iface_mac)
+                logging.info("Test inbound:")
+                res1 = utils_net.check_class_rules(tap_name, "1:1", ast.literal_eval(iface_inbound))
+                logging.info("Test outbound:")
+                res2 = utils_net.check_filter_rules(tap_name, ast.literal_eval(iface_outbound))
+                if not res1 or not res2:
+                    test.fail("Qos test fail!")
+            if detach:
+                if detach_type == "interface":
+                    options = "--type %s --mac %s" % (iface_type, iface_mac)
+                    virsh.detach_interface(vm_name, options,
+                                           ignore_status=False, debug=True)
+                else:
+                    detach_xml = iface_xml.xml
+                    virsh.detach_device(vm_name, detach_xml,
+                                        ignore_status=False, debug=True)
 
         except virt_vm.VMStartError as details:
             logging.info(str(details))
@@ -171,4 +221,6 @@ def run(test, params, env):
         # Try to recovery ovs bridge
         if utils_net.ovs_br_exists(bridge_name):
             utils_net.del_ovs_bridge(bridge_name)
+        if "iface_attach_xml" in locals():
+            os.remove(iface_attach_xml)
         vmxml_backup.sync()

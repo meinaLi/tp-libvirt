@@ -8,10 +8,15 @@ from avocado.utils import process
 from virttest import utils_v2v
 from virttest import virsh
 from virttest import utils_misc
+
+from virttest.utils_conn import update_crypto_policy
 from virttest.utils_test import libvirt as utlv
+from virttest.utils_v2v import params_get
 from virttest.libvirt_xml import vm_xml
 
 from provider.v2v_vmcheck_helper import VMChecker
+
+LOG = logging.getLogger('avocado.v2v.' + __name__)
 
 
 def run(test, params, env):
@@ -22,6 +27,7 @@ def run(test, params, env):
         if "V2V_EXAMPLE" in v:
             raise exceptions.TestSkipError("Please set real value for %s" % v)
 
+    enable_legacy_policy = params_get(params, "enable_legacy_policy") == 'yes'
     vm_name = params.get("main_vm")
     source_user = params.get("username", "root")
     xen_ip = params.get("xen_hostname")
@@ -47,13 +53,8 @@ def run(test, params, env):
     source_pwd = None
 
     # Prepare step for different hypervisor
-    if hypervisor == "xen":
-        # See man virt-v2v-input-xen(1)
-        process.run(
-            'update-crypto-policies --set LEGACY',
-            verbose=True,
-            ignore_status=True,
-            shell=True)
+    if enable_legacy_policy:
+        update_crypto_policy("LEGACY")
 
     if hypervisor == "esx":
         source_ip = vpx_ip
@@ -80,7 +81,7 @@ def run(test, params, env):
     # Create libvirt URI for the source node
     v2v_uri = utils_v2v.Uri(hypervisor)
     remote_uri = v2v_uri.get_uri(source_ip, vpx_dc, esx_ip)
-    logging.debug("Remote host uri for converting: %s", remote_uri)
+    LOG.debug("Remote host uri for converting: %s", remote_uri)
 
     # Make sure the VM exist before convert
     virsh_dargs = {'uri': remote_uri, 'remote_ip': source_ip,
@@ -141,13 +142,13 @@ def run(test, params, env):
         if ret.exit_status != 0:
             raise exceptions.TestFail("Convert VM failed")
 
-        logging.debug("XML info:\n%s", virsh.dumpxml(vm_name))
+        LOG.debug("XML info:\n%s", virsh.dumpxml(vm_name))
         vm = env.create_vm("libvirt", "libvirt", vm_name, params, test.bindir)
         # Win10 is not supported by some cpu model,
         # need to modify to 'host-model'
         unsupport_list = ['win10', 'win2016', 'win2019']
         if params.get('os_version') in unsupport_list:
-            logging.info(
+            LOG.info(
                 'Set cpu mode to "host-model" for %s.',
                 unsupport_list)
             vmxml = vm_xml.VMXML.new_from_inactive_dumpxml(vm_name)
@@ -174,21 +175,16 @@ def run(test, params, env):
             vmchecker.cleanup()
 
         if len(ret) == 0:
-            logging.info("All checkpoints passed")
+            LOG.info("All checkpoints passed")
         else:
             raise exceptions.TestFail(
                 "%d checkpoints failed: %s" %
                 (len(ret), ret))
     finally:
         utils_v2v.cleanup_constant_files(params)
+        if enable_legacy_policy:
+            update_crypto_policy()
         if hypervisor == "xen":
-            # Restore crypto-policies to DEFAULT, the setting is impossible to be
-            # other values by default in testing environment.
-            process.run(
-                'update-crypto-policies --set DEFAULT',
-                verbose=True,
-                ignore_status=True,
-                shell=True)
             utils_v2v.v2v_setup_ssh_key_cleanup(xen_session, xen_pubkey)
             process.run("ssh-agent -k")
         # Clean libvirt VM

@@ -1,9 +1,9 @@
-import logging
+import logging as log
 import os
 import re
-from aexpect.utils import astring
-from aexpect.exceptions import ShellProcessTerminatedError
 
+from aexpect.exceptions import ShellProcessTerminatedError
+from aexpect.utils import astring
 from avocado.utils import process
 
 from virttest import remote
@@ -13,13 +13,14 @@ from virttest import utils_misc
 from virttest import data_dir
 from virttest import ceph
 from virttest import gluster
+from virttest import libvirt_version
 
 from virttest.utils_test import libvirt as utlv
 from virttest.libvirt_xml.devices.controller import Controller
 from virttest.libvirt_xml import vm_xml
 from virttest.libvirt_xml.devices.disk import Disk
+from virttest.utils_libvirt import libvirt_bios
 
-from virttest import libvirt_version
 
 # Global test env cleanup variables
 cleanup_iscsi = False
@@ -27,6 +28,11 @@ cleanup_gluster = False
 cleanup_iso_file = False
 cleanup_image_file = False
 cleanup_released_image_file = False
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def get_stripped_output(cont, custom_codes=None):
@@ -265,6 +271,7 @@ def setup_test_env(params, test):
             with open(key_file, 'w') as f:
                 f.write("[%s]\n\tkey = %s\n" %
                         (client_name, client_key))
+
             key_opt = "--keyring %s" % key_file
 
             # Delete the disk if it exists
@@ -314,6 +321,7 @@ def apply_boot_options(vmxml, params, test):
     with_feature = params.get("with_feature", "no") == "yes"
 
     dict_os_attrs = {}
+
     # Set attributes of loader of VMOSXML
     if with_loader:
         logging.debug("Set os loader to test non-released os version without secure boot enabling")
@@ -351,7 +359,7 @@ def apply_boot_options(vmxml, params, test):
         nvram = nvram.replace("<VM_NAME>", vm_name)
         dict_os_attrs.update({"nvram": nvram})
         if with_nvram_template:
-            dict_os_attrs.update({"nvram_template": template})
+            dict_os_attrs.update({"nvram_attrs": {"template": template}})
 
     vmxml.set_os_attrs(**dict_os_attrs)
 
@@ -669,11 +677,14 @@ def run(test, params, env):
     vmxml_backup = vm_xml.VMXML.new_from_dumpxml(vm_name)
     vmxml = vm_xml.VMXML.new_from_dumpxml(vm_name)
 
+    vmxml.os = libvirt_bios.remove_bootconfig_items_from_vmos(vmxml.os)
     # Prepare a blank params to confirm if delete the configure at the end of the test
     ceph_cfg = ''
+    keyring_file = ''
     try:
         # Create config file if it doesn't exist
         ceph_cfg = ceph.create_config_file(params.get("mon_host"))
+        keyring_file = ceph.create_keyring_file(params.get("client_name"), params.get('client_key'))
         setup_test_env(params, test)
         apply_boot_options(vmxml, params, test)
         blk_source = vm.get_first_disk_devices()['source']
@@ -742,8 +753,9 @@ def run(test, params, env):
         logging.debug("Succeed to boot %s" % vm_name)
     finally:
         # Remove ceph configure file if created.
-        if ceph_cfg:
-            os.remove(ceph_cfg)
+        for a_file in [ceph_cfg, keyring_file]:
+            if os.path.exists(a_file):
+                os.remove(a_file)
         logging.debug("Start to cleanup")
         if vm.is_alive:
             vm.destroy()

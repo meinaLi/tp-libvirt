@@ -1,4 +1,4 @@
-import logging
+import logging as log
 import re
 import aexpect
 import platform
@@ -18,6 +18,11 @@ from virttest import libvirt_version
 
 from virttest.libvirt_xml.devices import hostdev
 from virttest.libvirt_xml.devices.controller import Controller
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -120,6 +125,15 @@ def run(test, params, env):
         cmd_result = process.run(cmd, shell=True)
         logging.debug("new block device is: %s", device_source)
         cmd = "lsscsi | grep %s | awk '{print $1}'" % device_source
+
+        def _check_lun_info():
+            """
+            Check lun information
+            """
+            cmd_result = process.run(cmd, shell=True)
+            lun_info = re.findall("\d+", str(cmd_result.stdout.strip()))
+            return len(lun_info) == 4
+        utils_misc.wait_for(lambda: _check_lun_info, timeout=50)
         cmd_result = process.run(cmd, shell=True)
         lun_info = re.findall("\d+", str(cmd_result.stdout.strip()))
         if len(lun_info) != 4:
@@ -392,7 +406,7 @@ def run(test, params, env):
                         unpriv_sgio = True
                     else:
                         unpriv_sgio = False
-                    if not(check_unpriv_sgio(lsscsi_keyword, unpriv_sgio, test_shareable)):
+                    if not (check_unpriv_sgio(lsscsi_keyword, unpriv_sgio, test_shareable)):
                         test.fail("SCSI dev's unpriv_sgio value is inconsistent with "
                                   "hostdev xml's sgio value.")
 

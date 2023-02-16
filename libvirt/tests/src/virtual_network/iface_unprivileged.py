@@ -1,4 +1,4 @@
-import logging
+import logging as log
 import shutil
 import aexpect
 
@@ -12,6 +12,11 @@ from virttest import utils_package
 from virttest import virsh
 from virttest.libvirt_xml import vm_xml
 from virttest.utils_test import libvirt
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -58,7 +63,9 @@ def run(test, params, env):
     user_vm_name = params.get('user_vm_name', 'non_root_vm')
     bridge_name = params.get('bridge_name', 'test_br0') + rand_id
     device_type = params.get('device_type', '')
-    iface_name = utils_net.get_net_if(state="UP")[0]
+    iface_name = params.get("iface_name")
+    if not iface_name:
+        iface_name = utils_net.get_net_if(state="UP")[0]
     tap_name = params.get('tap_name', 'mytap0') + rand_id
     macvtap_name = params.get('macvtap_name', 'mymacvtap0') + rand_id
     remote_ip = params.get('remote_ip')
@@ -118,6 +125,11 @@ def run(test, params, env):
         logging.debug(virsh.dumpxml(upu_vm_name, **upu_args))
         upu_vmxml = vm_xml.VMXML()
         upu_vmxml.xml = virsh.dumpxml(upu_vm_name, **upu_args).stdout_text
+
+        # Remove nvram tag of os to avoid permission issue
+        os_xml = upu_vmxml.os
+        os_xml.del_nvram()
+        upu_vmxml.os = os_xml
 
         if case == 'precreated':
             if device_type == 'tap':
@@ -187,10 +199,13 @@ def run(test, params, env):
             upu_vmxml.devices = all_devices
             logging.debug(upu_vmxml)
 
+            # Remove seclabel model="dac" since unprivileged user doesn't support this feature
+            upu_vmxml.del_seclabel([('model', 'dac'), ('relabel', 'yes')])
             # Define updated xml
             shutil.copyfile(upu_vmxml.xml, new_xml_path)
             upu_vmxml.xml = new_xml_path
             virsh.define(new_xml_path, **upu_args)
+            logging.debug(virsh.dumpxml(upu_vm_name, **upu_args).stdout_text)
 
             # Switch to unprivileged user and modify vm's interface
             # Start vm as unprivileged user and test network
@@ -209,7 +224,7 @@ def run(test, params, env):
     finally:
         if 'upu_virsh' in locals():
             virsh.destroy(upu_vm_name, unprivileged_user=up_user)
-            virsh.undefine(upu_vm_name, unprivileged_user=up_user)
+            virsh.undefine(upu_vm_name, options='--nvram', unprivileged_user=up_user)
         if case == 'precreated':
             try:
                 if device_type == 'tap':

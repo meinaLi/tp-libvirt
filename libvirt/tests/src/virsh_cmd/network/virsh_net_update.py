@@ -1,5 +1,5 @@
 import os
-import logging
+import logging as log
 import re
 import tempfile
 import time
@@ -13,6 +13,11 @@ from virttest.libvirt_xml import network_xml
 from virttest.libvirt_xml import xcepts
 from virttest.libvirt_xml import vm_xml
 from avocado.utils import process
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -312,7 +317,7 @@ def run(test, params, env):
             if net_section == "portgroup":
                 portgroup_xml = network_xml.PortgroupXML()
                 portgroup_xml.xml = port_group
-                test_xml.portgroup = portgroup_xml
+                test_xml.portgroups = [portgroup_xml]
             elif net_section == "forward-interface":
                 if forward_mode == "bridge":
                     forward_iface = utils_net.get_net_if(state="UP")[0]
@@ -320,8 +325,7 @@ def run(test, params, env):
                 test_xml.forward_interface = [{'dev': forward_iface}]
                 del test_xml.bridge
                 del test_xml.mac
-                for ip_num in range(4):
-                    del test_xml.ip
+                del test_xml.ips
                 del test_xml.routes
                 del test_xml.dns
                 del test_xml.mtu

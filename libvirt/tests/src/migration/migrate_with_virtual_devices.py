@@ -1,15 +1,21 @@
 import ast
 import aexpect
-import logging
+import logging as log
 
 from avocado.utils import process
 
 from virttest.libvirt_xml import vm_xml, xcepts
 from virttest.libvirt_xml.devices import rng
+from virttest.utils_libvirt import libvirt_vmxml
 from virttest.utils_test import libvirt
 from virttest import utils_misc
 from virttest import virsh, libvirt_version
 from virttest import migration_template as mt
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 class DeviceNotFoundError(mt.Error):
@@ -196,6 +202,10 @@ class MigrationWithRng(MigrationVirtualDevicesBase):
         if self._vm_rng_mode() == 'client':
             self._create_tcp_rng_source(self.migrate_source_host,
                                         mode='server')
+
+        # Remove tpm device. Because tpm device also has a buitin rng device,
+        # after detaching rng device, we will still see /dev/hwrng in vm.
+        libvirt_vmxml.remove_vm_devices_by_type(self.main_vm, 'tpm')
 
         # Remove rng devices from vm xml definition
         self._remove_rng_from_vmxml(self.main_vm)

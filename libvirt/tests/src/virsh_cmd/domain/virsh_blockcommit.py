@@ -1,10 +1,11 @@
 import os
-import logging
+import logging as log
 import tempfile
 import collections
 
 import aexpect
 
+from avocado.utils import distro
 from avocado.utils import process
 
 from multiprocessing.pool import ThreadPool
@@ -21,6 +22,11 @@ from virttest.libvirt_xml import vm_xml
 from virttest.utils_test import libvirt
 
 from virttest import libvirt_version
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def get_images_with_xattr(vm):
@@ -316,7 +322,7 @@ def run(test, params, env):
             backing_file_path = os.path.join(root_dir, key)
             external_snap_shot = "%s/%s" % (backing_file_path, value)
             snapshot_external_disks.append(external_snap_shot)
-            options = "%s --diskspec %s,file=%s" % (meta_options, disk_target, external_snap_shot)
+            options = "%s %s --diskspec %s,file=%s" % ('snap-%s' % key, meta_options, disk_target, external_snap_shot)
             cmd_result = virsh.snapshot_create_as(vm_name, options,
                                                   ignore_status=False,
                                                   debug=True)
@@ -348,6 +354,12 @@ def run(test, params, env):
             options += "  --diskspec  %s,snapshot=external,file=%s" % (block_target, disk_external)
             virsh.snapshot_create_as(vm_name, options,
                                      ignore_status=False, debug=True)
+
+            if not utils_misc.wait_for(
+                    lambda: libvirt.check_blockjob(vm_name, block_target,
+                                                   "none"), 30, first=3):
+                test.fail("There should be no current block job")
+
             virsh.blockcommit(vm_name, block_target,
                               " --active --pivot ", ignore_status=False, debug=True)
             virsh.snapshot_delete(vm_name, tmp_snapshot_name, " --metadata")
@@ -440,10 +452,14 @@ def run(test, params, env):
                 ceph_cfg = ceph.create_config_file(mon_host)
                 if src_host.count("EXAMPLE") or mon_host.count("EXAMPLE"):
                     test.cancel("Please provide rbd host first.")
-
+                detected_distro = distro.detect()
+                rbd_img_prefix = '_'.join(['rbd', detected_distro.name,
+                                           detected_distro.version,
+                                           detected_distro.release,
+                                           detected_distro.arch])
                 params.update(
                    {"disk_source_name": os.path.join(
-                      pool_name, 'rbd_'+utils_misc.generate_random_string(4)+'.img')})
+                      pool_name, rbd_img_prefix + '.img')})
                 if utils_package.package_install(["ceph-common"]):
                     ceph.rbd_image_rm(mon_host, *params.get("disk_source_name").split('/'))
                 else:
@@ -646,8 +662,7 @@ def run(test, params, env):
 
         if with_active_commit:
             # inactive commit follow active commit will fail with bug 1135339
-            cmd = "virsh blockcommit %s %s --active --pivot" % (vm_name,
-                                                                blk_target)
+            cmd = "virsh blockcommit %s %s --active" % (vm_name, blk_target)
             cmd_session = aexpect.ShellSession(cmd)
 
         if backing_file_relative_path:

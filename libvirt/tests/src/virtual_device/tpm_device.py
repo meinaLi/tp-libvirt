@@ -1,9 +1,10 @@
 import os
 import re
-import logging
+import logging as log
 import time
 import platform
 import shutil
+import glob
 
 from virttest import data_dir
 from virttest import libvirt_version
@@ -24,6 +25,11 @@ from avocado.utils import service
 from avocado.utils import process
 from avocado.utils import astring
 from avocado.utils import path as utils_path
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -70,8 +76,25 @@ def run(test, params, env):
     loader = params.get("loader", "")
     nvram = params.get("nvram", "")
     uefi_disk_url = params.get("uefi_disk_url", "")
+    tpm_testsuite_url = params.get("tpm_testsuite_url", "")
     download_file_path = os.path.join(data_dir.get_data_dir(), "uefi_disk.qcow2")
     persistent_state = ("yes" == params.get("persistent_state", "no"))
+    check_pcrbanks = ('yes' == params.get("check_pcrbanks", "no"))
+    remove_pcrbank = ('yes' == params.get("remove_pcrbank", "no"))
+    pcrbank_change = params.get("pcrbank_change")
+    test_rsaencypt = ('yes' == params.get("test_rsaencypt", "no"))
+    active_pcr_banks = params.get("active_pcr_banks")
+    if backend_version == 'none' and libvirt_version.version_compare(8, 7, 0):
+        #bz2084046 fixed active_pcr_banks disappear issue with default version.
+        active_pcr_banks = 'sha256'
+    if active_pcr_banks:
+        active_pcr_banks = active_pcr_banks.split(",")
+    if tpm_model == '0_or_default':
+        #bz2084046, previously 'default' is accepted before libvirt-8.7.0.
+        tpm_model = 'default' if libvirt_version.version_compare(8, 7, 0) else '0'
+    if backend_version == 'default' and not libvirt_version.version_compare(8, 7, 0):
+        err_msg = ""
+        status_error = False
 
     libvirt_version.is_libvirt_feature_supported(params)
 
@@ -116,6 +139,20 @@ def run(test, params, env):
         if not utils_package.package_install(["swtpm", "swtpm-tools"]):
             test.error("Failed to install swtpm swtpm-tools on host")
 
+    def compare_swtpm_version(major, minor):
+        """
+        Get swtpm pkg version and check whether > major.minor
+
+        :param major: swtpm major version number
+        :param minor: swtpm minor version number
+        :return: boolean value compared to major.minor
+        """
+        cmd = 'rpm -q swtpm'
+        v_swtpm = process.run(cmd).stdout_text.strip().split('-')
+        v_major = int(v_swtpm[1].split('.')[0])
+        v_minor = int(v_swtpm[1].split('.')[1])
+        return False if (v_major == major and v_minor < minor) else True
+
     def replace_os_disk(vm_xml, vm_name, nvram):
         """
         Replace os(nvram) and disk(uefi) for x86 vtpm test
@@ -156,12 +193,17 @@ def run(test, params, env):
     domuuid = vm.get_uuid()
     vm_xml = VMXML.new_from_inactive_dumpxml(vm_name)
     vm_xml_backup = vm_xml.copy()
-    os_xml = getattr(vm_xml, "os")
     host_arch = platform.machine()
+
+    # Only check_pcrbanks for new version
+    if not libvirt_version.version_compare(7, 10, 0) or not compare_swtpm_version(0, 7):
+        check_pcrbanks = False
+
     if backend_type == "emulator" and host_arch == 'x86_64':
         if not utils_package.package_install("OVMF"):
             test.error("Failed to install OVMF or edk2-ovmf pkgs on host")
-        if os_xml.xmltreefile.find('nvram') is None:
+        os_attrs = vm_xml.os.fetch_attrs()
+        if not any([os_attrs.get('os_firmware') == "efi", os_attrs.get('nvram')]):
             replace_os_disk(vm_xml, vm_name, nvram)
             vm_xml = VMXML.new_from_inactive_dumpxml(vm_name)
     if vm.is_alive():
@@ -193,6 +235,21 @@ def run(test, params, env):
 
     service_mgr = service.ServiceManager()
 
+    def check_active_pcr_banks(xml):
+        """
+        Check whether active_pcr_banks show in guest xml
+
+        :param xml: the xml to find active_pcr_banks
+        """
+        pattern = '<active_pcr_banks>'
+        if pattern not in astring.to_text(xml):
+            test.fail("Can not find the %s xml for tpm dev "
+                      "in the guest xml file." % pattern)
+        for pcrbank in active_pcr_banks:
+            if pcrbank not in astring.to_text(xml):
+                test.fail("Can not find the %s pcrbank xml for tpm dev "
+                          "in the guest xml file." % pcrbank)
+
     def check_dumpxml(vm_name):
         """
         Check whether the added devices are shown in the guest xml
@@ -218,11 +275,14 @@ def run(test, params, env):
                       "in the guest xml file." % backend_type)
         # Check backend version
         if backend_version:
-            check_ver = backend_version if backend_version != 'none' else '2.0'
+            check_ver = backend_version if backend_version not in ["none", "default"] else '2.0'
             pattern = '"emulator" version="%s"' % check_ver
             if pattern not in astring.to_text(xml_after_adding_device):
                 test.fail("Can not find the %s backend version xml for tpm dev "
                           "in the guest xml file." % check_ver)
+        # Check active_pcr_banks
+        if active_pcr_banks and not remove_pcrbank:
+            check_active_pcr_banks(xml_after_adding_device)
         # Check device path
         if backend_type == "passthrough":
             pattern = '<device path="/dev/tpm0"'
@@ -284,18 +344,18 @@ def run(test, params, env):
         """
         logging.info("------Checking swtpm cmdline and files------")
         # Check swtpm cmdline
-        swtpm_pid = utils_misc.get_pid("%s-swtpm.pid" % vm_name)
+        swtpm_pid = utils_misc.get_pid("swtpm socket.*%s" % vm_name)
         if not swtpm_pid:
             if not remove_dev:
-                test.fail('swtpm pid file missing.')
+                test.fail('swtpm socket process missing.')
             else:
                 return
         elif remove_dev:
-            test.fail('swtpm pid file still exists after remove vtpm and restart')
+            test.fail('swtpm socket process still exists after remove vtpm and restart')
         with open('/proc/%s/cmdline' % swtpm_pid) as cmdline_file:
             cmdline = cmdline_file.read()
             logging.debug("Swtpm cmd line info:\n %s", cmdline)
-        pattern_list = ["--daemon", "--ctrl", "--tpmstate", "--log", "--tpm2", "--pid"]
+        pattern_list = ["--ctrl", "--tpmstate", "--log", "--tpm2"]
         if prepare_secret:
             pattern_list.extend(["--key", "--migration-key"])
         for pattern in pattern_list:
@@ -439,6 +499,23 @@ def run(test, params, env):
                         logging.debug("Command output: %s", d_output)
                 elif expect_fail:
                     test.fail("Expect fail but guest tpm still works")
+                if active_pcr_banks or check_pcrbanks:
+                    output3 = session.cmd_output("tpm2_pcrread").replace(' ', '')
+                    logging.debug("Command output:\n %s", output3)
+                    actual_pcrbanks = []
+                    if output3.find('sha256') != 6:
+                        actual_pcrbanks.append('sha1')
+                    if output3.find('sha384') != output3.find('sha256') + 8:
+                        actual_pcrbanks.append('sha256')
+                    if output3.find('sha512') != output3.find('sha384') + 8:
+                        actual_pcrbanks.append('sha384')
+                    if 'sha512' not in output3[-8:]:
+                        actual_pcrbanks.append('sha512')
+                    logging.debug("Actual active PCR banks in guest are: %s", actual_pcrbanks)
+                    if active_pcr_banks and active_pcr_banks != actual_pcrbanks:
+                        test.fail("Actual active PCR banks in guest do not match configured in xml.")
+                    elif check_pcrbanks and actual_pcrbanks != ["sha256"]:
+                        test.fail("Default PCR bank is not sha256: %s" % actual_pcrbanks)
         logging.info("------PASS on guest tpm device work check------")
 
     def run_test_suite_in_guest(session):
@@ -448,32 +525,29 @@ def run(test, params, env):
         :param session: Guest session to be tested
         """
         logging.info("------Checking kernel test suite for guest tpm------")
-        boot_info = session.cmd('uname -r').strip().split('.')
-        kernel_version = '.'.join(boot_info[:2])
-        # Download test suite per current guest kernel version
-        parent_path = "https://cdn.kernel.org/pub/linux/kernel"
-        if float(kernel_version) < 5.3:
-            major_version = "5"
-            file_version = "5.3"
-        else:
-            major_version = boot_info[0]
-            file_version = kernel_version
-        src_url = "%s/v%s.x/linux-%s.tar.xz" % (parent_path, major_version, file_version)
-        download_cmd = "wget %s -O %s" % (src_url, "/root/linux.tar.xz")
+        # Download test suite
+        if tpm_testsuite_url.count("EXAMPLE"):
+            test.error("Please provide the URL %s" % tpm_testsuite_url)
+        download_cmd = "wget %s -O %s" % (tpm_testsuite_url, "/root/linux.tar.xz")
         output = session.cmd_output(download_cmd, timeout=480)
         logging.debug("Command output: %s", output)
         # Install necessary pkgs to build test suite
-        if not utils_package.package_install(["tar", "make", "gcc", "rsync", "python2"], session, 360):
+        if not utils_package.package_install(["tar", "make", "gcc", "rsync"], session, 360):
             test.fail("Failed to install specified pkgs in guest OS.")
         # Unzip the downloaded test suite
         status, output = session.cmd_status_output("tar xvJf /root/linux.tar.xz -C /root")
         if status:
             test.fail("Uzip failed: %s" % output)
-        # Specify using python2 to run the test suite per supporting
-        test_path = "/root/linux-%s/tools/testing/selftests" % file_version
-        sed_cmd = "sed -i 's/python -m unittest/python2 -m unittest/g' %s/tpm2/test_*.sh" % test_path
-        output = session.cmd_output(sed_cmd)
-        logging.debug("Command output: %s", output)
+        file_name = session.cmd_output("ls /root/|grep linux-").strip()
+        # Specify using python to run the test suite per product version
+        test_path = "/root/%s/tools/testing/selftests" % file_name
+        if tpm_testsuite_url.count("el8"):
+            if utils_package.package_install("python2", session, 360):
+                sed_cmd = "sed -i 's/python -m unittest/python2 -m unittest/g' %s/tpm2/test_*.sh" % test_path
+                output = session.cmd_output(sed_cmd)
+                logging.debug("Command output: %s", output)
+            elif not utils_package.package_install("python3", session, 360):
+                test.fail("Failed to install python pkg in guest OS.")
         # Build and and run the .sh files of test suite
         status, output = session.cmd_status_output("make -C %s TARGETS=tpm2 run_tests" % test_path, timeout=360)
         logging.debug("Command output: %s", output)
@@ -487,6 +561,33 @@ def run(test, params, env):
                 else:
                     test.fail("test suite check failed.")
         logging.info("------PASS on kernel test suite check------")
+
+    def test_rsaencypt_in_guest(session):
+        """
+        Test tpm RSA encryption in guest.
+
+        :param session: Guest session to be tested
+        """
+        if not utils_package.package_install(["tpm2-tools"], session, 360):
+            test.error("Failed to install tpm2-tools package in guest")
+        session.cmd_status_output("tpm2_createprimary -c primary.ctx")
+        session.cmd("tpm2_create -C primary.ctx -Grsa2048 -u key.pub -r key.priv")
+        session.cmd("tpm2_load -C primary.ctx -u key.pub -r key.priv -c key.ctx")
+        test_msg = 'my message'
+        session.cmd("echo %s > msg.dat" % test_msg)
+        for padding_scheme in ['oaep', 'rsaes', 'null']:
+            status, output = session.cmd_status_output("tpm2_rsaencrypt -c key.ctx -o msg.enc -s %s msg.dat" % padding_scheme)
+            if status:
+                test.fail("Rsaencrypt failed with %s padding scheme: %s" % (padding_scheme, output))
+            status, output = session.cmd_status_output("tpm2_rsadecrypt -c key.ctx -o msg.ptext -s %s msg.enc" % padding_scheme)
+            if status:
+                test.fail("Rsadecrypt failed with %s padding scheme: %s" % (padding_scheme, output))
+            output = session.cmd_output("cat msg.ptext").strip()
+            logging.debug(output)
+            if test_msg not in output:
+                test.fail("Data decrypted '%s' with %s padding scheme does not match original '%s'" % (output, padding_scheme, test_msg))
+            session.cmd("rm -f msg.enc msg.ptext")
+        session.cmd("rm -f primary.ctx key.pub key.priv key.ctx msg.dat")
 
     def persistent_test(vm, vm_xml):
         """
@@ -527,12 +628,46 @@ def run(test, params, env):
             # emulator backend
             test.fail("Vtpm for each guest should not interfere with each other")
 
+    def save_modify_pcrbank(vm_name, active_pcr_banks, pcrbank_change):
+        """
+        Try to modify active_pcr_banks for managedsaved vm.
+        By making changes to xmlfile and managedsave-define with it
+
+        :param vm_name: current vm name
+        :param active_pcr_banks: current active_pcr_banks configured in managedsaved xml
+        :param pcrbank_change: new active_pcr_banks to replace with
+        """
+        xmlfile = os.path.join(data_dir.get_tmp_dir(), 'managedsave.xml')
+        virsh.managedsave_dumpxml(vm_name, to_file=xmlfile, ignore_status=False, debug=False)
+        with open(xmlfile) as file_xml:
+            old_pcrbank = '<%s/>' % active_pcr_banks[0]
+            new_pcrbank = '<%s/>' % pcrbank_change
+            updated_xml = file_xml.read().replace(old_pcrbank, new_pcrbank)
+            logging.debug("Updated xml for managedsave-define is:\n %s" % updated_xml)
+        with open(xmlfile, 'w') as file_xml:
+            file_xml.write(updated_xml)
+        ret = virsh.managedsave_define(vm_name, xmlfile, '', ignore_status=True, debug=True)
+        libvirt.check_exit_status(ret, status_error)
+
+    def check_swtpmpidfile(vm_name, test_stage):
+        """
+        Report error if swtpm.pid file exists at some test stage.
+
+        :param vm_name: current vm name
+        :param test_stage: test stage that checking this file
+        """
+        swtpm_pidfile = glob.glob("/run/libvirt/qemu/swtpm/*-%s-swtpm.pid" % vm_name)
+        # since bz2111301, only report error from libvirt-8.7.0.
+        if swtpm_pidfile and libvirt_version.version_compare(8, 7, 0):
+            test.error('swtpm.pid still exists after %s: %s' % (test_stage, swtpm_pidfile))
+
     try:
         tpm_real_v = None
         sec_uuids = []
         new_name = ""
         virsh_dargs = {"debug": True, "ignore_status": False}
         vm_xml.remove_all_device_by_type('tpm')
+        vm_xml.sync()
         tpm_dev = Tpm()
         if tpm_model:
             tpm_dev.tpm_model = tpm_model
@@ -573,6 +708,11 @@ def run(test, params, env):
                             sec_uuids.append(new_encryption_uuid)
                     if secret_uuid == 'nonexist':
                         backend.encryption_secret = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+                    if active_pcr_banks:
+                        backend_pcrbank = backend.ActivePCRBanks()
+                        for pcrbank in active_pcr_banks:
+                            backend_pcrbank.add_pcrbank(pcrbank)
+                        backend.active_pcr_banks = backend_pcrbank
             tpm_dev.backend = backend
         logging.debug("tpm dev xml to add is:\n %s", tpm_dev)
         for num in range(tpm_num):
@@ -591,8 +731,7 @@ def run(test, params, env):
             return
         if vm_operate != "restart":
             check_dumpxml(vm_name)
-        # For default model, no need start guest to test
-        if tpm_model:
+        if tpm_model and backend_version != 'default':
             expect_fail = False
             try:
                 vm.start()
@@ -619,6 +758,7 @@ def run(test, params, env):
                     virsh.snapshot_create_as(vm_name, "sp1 --memspec file=/tmp/testvm_sp1", **virsh_dargs)
                 elif vm_operate in ["restart", "create"]:
                     vm.destroy()
+                    check_swtpmpidfile(vm_name, "vm destroyed")
                     if vm_operate == "create":
                         virsh.undefine(vm_name, options="--nvram", **virsh_dargs)
                         if os.path.exists(swtpm_statedir):
@@ -637,6 +777,14 @@ def run(test, params, env):
                         elif not restart_libvirtd:
                             # remove_dev or do other vm operations during restart
                             vm_xml.remove_all_device_by_type('tpm')
+                            if remove_pcrbank:
+                                for pcrbank in active_pcr_banks:
+                                    backend_pcrbank.remove_pcrbank(pcrbank)
+                                backend.active_pcr_banks = backend_pcrbank
+                                tpm_dev.backend = backend
+                                vm_xml.add_device(tpm_dev, True)
+                                # Do not clear active_pcr_banks for later test_guest_tpm check,since in guest os
+                                # it should keep as last startup config if it's removed from guest xml.
                             if secret_uuid == "change" or encrypt_change:
                                 # Change secret uuid, or change encryption state:from plain to encrypted, or on the contrary
                                 if encrypt_change == 'plain':
@@ -654,7 +802,7 @@ def run(test, params, env):
                                 tpm_dev.backend = backend
                                 logging.debug("The new tpm dev xml to add for restart vm is:\n %s", tpm_dev)
                                 vm_xml.add_device(tpm_dev, True)
-                            if encrypt_change in ['encrpt', 'plain']:
+                            if encrypt_change in ['encrpt', 'plain'] or remove_pcrbank:
                                 # Avoid sync() undefine removing the state file
                                 vm_xml.define()
                             else:
@@ -672,6 +820,10 @@ def run(test, params, env):
                 elif vm_operate == 'managedsave':
                     virsh.managedsave(vm_name, **virsh_dargs)
                     time.sleep(5)
+                    check_swtpmpidfile(vm_name, "vm managedsaved")
+                    if pcrbank_change:
+                        save_modify_pcrbank(vm_name, active_pcr_banks, pcrbank_change)
+                        return
                     if secret_value == 'change':
                         logging.info("Changing secret value...")
                         virsh.secret_set_value(encryption_uuid, "new sesame", encode=True, debug=True)
@@ -699,6 +851,8 @@ def run(test, params, env):
             session = vm.wait_for_login()
             if test_suite:
                 run_test_suite_in_guest(session)
+            elif test_rsaencypt:
+                test_rsaencypt_in_guest(session)
             else:
                 test_guest_tpm(expect_version, session, expect_fail)
             session.close()
@@ -737,9 +891,12 @@ def run(test, params, env):
             output = session.cmd_output("rm -rf /root/linux-*")
             logging.debug("Command output:\n %s", output)
             session.close()
+        if pcrbank_change:
+            virsh.managedsave_remove(vm_name, debug=True)
         if vm_operate == "create":
             vm.define(vm_xml.xml)
         vm_xml_backup.sync(options="--nvram --managed-save")
+        check_swtpmpidfile(vm_name, "test finished")
         # Remove swtpm log file in case of impact on later runs
         if os.path.exists("/var/log/swtpm/libvirt/qemu/%s-swtpm.log" % vm.name):
             os.remove("/var/log/swtpm/libvirt/qemu/%s-swtpm.log" % vm.name)

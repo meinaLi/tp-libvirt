@@ -1,5 +1,5 @@
 import os
-import logging
+import logging as log
 
 from avocado.utils import process
 
@@ -13,6 +13,11 @@ from virttest.libvirt_xml import pool_xml
 from virttest.libvirt_xml import xcepts
 
 from virttest import libvirt_version
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -35,6 +40,7 @@ def run(test, params, env):
     iscsi_host = params.get("iscsi_host", "127.0.0.1")
     chap_user = params.get("iscsi_user")
     chap_passwd = params.get("iscsi_password")
+    enable_authentication = "yes" == params.get("enable_authentication", "no")
 
     # ceph options
     ceph_auth_user = params.get("ceph_auth_user")
@@ -113,7 +119,8 @@ def run(test, params, env):
                                                                is_login=False,
                                                                image_size=emulated_size,
                                                                chap_user=chap_user,
-                                                               chap_passwd=chap_passwd)
+                                                               chap_passwd=chap_passwd,
+                                                               enable_authentication=enable_authentication)
         return iscsi_target
 
     def check_auth_in_xml(dparams):

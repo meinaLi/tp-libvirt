@@ -1,8 +1,13 @@
-import logging
+import logging as log
 import re
 
 from virttest import virsh
 from virttest.libvirt_xml.base import LibvirtXMLBase
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -75,5 +80,6 @@ def get_device(nodedev_list, pattern):
     """
     for dev_id in nodedev_list:
         if re.search(pattern, dev_id):
+            logging.debug("Selected %s", dev_id)
             return dev_id
     return None

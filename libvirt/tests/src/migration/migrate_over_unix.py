@@ -1,5 +1,6 @@
 import os
-import logging
+import logging as log
+import re
 import time
 
 from avocado.utils import process
@@ -18,6 +19,14 @@ from virttest.libvirt_xml import vm_xml
 from virttest.utils_test import libvirt
 from virttest.utils_libvirt import libvirt_disk
 from virttest.utils_libvirt import libvirt_pcicontr
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
+
+# Store last check_sockets result in this variable for better error reporting.
+sockets = None
 
 
 def run(test, params, env):
@@ -69,6 +78,9 @@ def run(test, params, env):
             for idx in range(2, disk_num+1):
                 disk_path = os.path.join(os.path.dirname(blk_source),
                                          "test%s.img" % str(idx))
+                # Delete dirty disk if existed
+                if os.path.exists(disk_path):
+                    os.remove(disk_path)
                 # Create disk on local
                 libvirt_disk.create_disk("file", disk_format=disk_format,
                                          path=disk_path)
@@ -108,12 +120,22 @@ def run(test, params, env):
         exp_num = params.get("expected_socket_num", "2")
         if postcopy_options:
             migration_test.set_migratepostcopy(vm_name)
-        cmd = ("netstat -xanp|grep -E \"CONNECTED"
-               ".*(desturi-socket|migrateuri-socket)\" | wc -l")
-        res = process.run(cmd, shell=True).stdout_text.strip()
-        if res != exp_num:
+
+        cmd = ("netstat -xanp| grep \"CONNECTED\"")
+        socket_pattern = re.compile(r".*(desturi-socket|migrateuri-socket).*")
+
+        def _check_socket():
+            _res = process.run(cmd, shell=True).stdout_text.split('\n')
+            global sockets
+            sockets = [x.strip() for x in _res if socket_pattern.match(x)]
+            logging.debug("Found sockets: %s", sockets)
+            return len(sockets) == int(exp_num)
+
+        found_expected = utils_misc.wait_for(_check_socket, timeout=30)
+
+        if not found_expected:
             test.fail("There should be {} connected unix sockets, "
-                      "but found {} sockets.".format(exp_num, res))
+                      "but found {} sockets.".format(exp_num, len(sockets)))
 
     migration_test = migration.MigrationTest()
     migration_test.check_parameters(params)
@@ -134,6 +156,7 @@ def run(test, params, env):
     migrateuri_port = params.get("migrateuri_port", "33333")
     disks_uri_port = params.get("disks_uri_port", "44444")
     migrate_again = "yes" == params.get("migrate_again", "no")
+    stress_guest = "yes" == params.get("stress_guest", "no")
     action_during_mig = params.get("action_during_mig")
     if action_during_mig:
         action_during_mig = eval(action_during_mig)
@@ -207,6 +230,9 @@ def run(test, params, env):
         # Execute migration process
         vms = [vm]
 
+        if stress_guest:
+            migration_test.run_stress_in_vm(vm, params)
+
         migration_test.do_migration(vms, None, dest_uri, 'orderly',
                                     options, thread_timeout=600,
                                     ignore_status=True, virsh_opt=virsh_options,
@@ -240,6 +266,8 @@ def run(test, params, env):
                                       debug=True), 60):
                 test.fail("The migrated VM should be alive!")
             if vm_did_list:
+                if vm.serial_console is None:
+                    vm.create_serial_console()
                 vm_session_after_mig = vm.wait_for_serial_login(timeout=240)
                 for did in vm_did_list:
                     vm_session_after_mig.cmd(

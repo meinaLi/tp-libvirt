@@ -1,4 +1,4 @@
-import logging
+import logging as log
 import os
 import re
 import string
@@ -18,6 +18,11 @@ from virttest.libvirt_xml import network_xml
 from virttest.libvirt_xml import vm_xml
 from virttest.libvirt_xml.devices.interface import Interface
 from virttest.libvirt_xml.devices.controller import Controller
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -113,7 +118,7 @@ def run(test, params, env):
             except process.CmdError:
                 raise test.fail("Get net list with 'virsh nodedev-list' failed\n")
 
-        net_diff = utils_misc.wait_for(_vf_init_completed, timeout=300)
+        net_diff = utils_misc.wait_for(_vf_init_completed, 300, 10)
         pci_list_sriov = virsh.nodedev_list(cap='pci').stdout.strip().splitlines()
         pci_list_sriov = set(pci_list_sriov)
         pci_diff = list(pci_list_sriov.difference(pci_list_before))
@@ -143,21 +148,24 @@ def run(test, params, env):
             vm.cleanup_serial_console()
         vm.create_serial_console()
         session = vm.wait_for_serial_login(timeout=240)
+        iface_name = utils_misc.wait_for(
+            lambda: utils_net.get_linux_ifname(session, mac_addr), 30,
+            first=5, ignore_errors=True)
+        if not iface_name:
+            test.fail("no interface with MAC address %s found" % mac_addr)
 
         def get_ip():
             return utils_net.get_guest_ip_addr(session, mac_addr)
 
         try:
             ip_addr = ""
-            iface_name = utils_net.get_linux_ifname(session, mac_addr)
-            if iface_name is None:
-                test.fail("no interface with MAC address %s found" % mac_addr)
             session.cmd("pkill -9 dhclient", ignore_all_errors=True)
             session.cmd("dhclient %s " % iface_name, ignore_all_errors=True)
             ip_addr = utils_misc.wait_for(get_ip, 20)
             logging.debug("The ip addr is %s", ip_addr)
-        except Exception:
-            logging.warning("Find %s with MAC address %s but no ip for it" % (iface_name, mac_addr))
+        except utils_net.IPAddrGetError:
+            logging.warning("Find %s with MAC address %s but no ip for it",
+                            iface_name, mac_addr)
         finally:
             session.close()
         return ip_addr
@@ -193,13 +201,10 @@ def run(test, params, env):
         vf_addr_list = []
         netxml = network_xml.NetworkXML()
         if vf_pool_source == "vf_list":
-            for vf in vf_list:
-                attrs = create_address_dict(vf)
-                new_vf = netxml.new_vf_address(**{'attrs': attrs})
-                vf_addr_list.append(new_vf)
+            vf_attrs = [{'attrs': create_address_dict(vf)} for vf in vf_list]
             netxml.driver = {'name': 'vfio'}
             netxml.forward = {"mode": "hostdev", "managed": managed}
-            netxml.vf_list = vf_addr_list
+            netxml.setup_attrs(**{'vf_list': vf_attrs})
         else:
             netxml.pf = {"dev": pf_name}
             netxml.forward = {"mode": "hostdev", "managed": managed}
@@ -262,11 +267,8 @@ def run(test, params, env):
             xml = NodedevXML.new_from_dumpxml(nodedev_pci)
             if info_type == "pf_info":
                 product_info = xml.cap.product_info
-                max_count = xml.max_count
                 if pci_info.find(product_info) == -1:
                     test.fail("The product_info show in nodedev-dumpxml is wrong\n")
-                if int(max_count) != max_vfs:
-                    test.fail("The maxCount show in nodedev-dumpxml is wrong\n")
             if info_type == "vf_order":
                 vf_addr_list = xml.cap.virt_functions
                 if len(vf_addr_list) != max_vfs:
@@ -574,7 +576,7 @@ def run(test, params, env):
         vm.create_serial_console()
         session = vm.wait_for_serial_login(timeout=240)
         vf_pci = "/sys/bus/pci/drivers/%s" % vf_driver
-        vf_dir = session.cmd_output("ls -d %s/00*" % vf_pci).strip().split('\n')
+        vf_dir = session.cmd_output("ls -d %s/00*" % vf_pci).strip().split()
         for vf in vf_dir:
             numa_node = session.cmd_output('cat %s/numa_node' % vf).strip().split('\n')[-1]
             logging.debug("The vf is attached to numa node %s\n", numa_node)

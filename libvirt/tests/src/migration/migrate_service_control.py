@@ -1,4 +1,4 @@
-import logging
+import logging as log
 import os
 
 from pwd import getpwuid
@@ -8,13 +8,16 @@ from virttest import libvirt_vm
 from virttest import migration
 from virttest import virsh
 from virttest import libvirt_version
-from virttest import remote
-from virttest import utils_libvirtd
 
 from virttest.libvirt_xml import vm_xml
 from virttest.utils_test import libvirt
 
 from provider.migration import migration_base
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def check_image_ownership(vm_name, exp_ownership, test):
@@ -119,16 +122,6 @@ def run(test, params, env):
 
         if kill_service:
             check_image_ownership(vm_name, expected_image_ownership, test)
-            if service_name == "libvirtd":
-                if service_on_dst:
-                    remote_session = remote.wait_for_login('ssh', server_ip, '22',
-                                                           server_user, server_pwd,
-                                                           r"[\#\$]\s*$")
-                    service_name = utils_libvirtd.Libvirtd(session=remote_session).service_name
-                    remote_session.close()
-                else:
-                    service_name = utils_libvirtd.Libvirtd().service_name
-                params.update({'service_name': service_name})
 
         if migrate_speed:
             mode = 'both' if '--postcopy' in postcopy_options else 'precopy'
@@ -141,10 +134,10 @@ def run(test, params, env):
                                                            test, params)
 
         # Execute migration process
-        migration_base.do_migration(vm, migration_test, None, dest_uri,
-                                    options, virsh_options, extra,
-                                    action_during_mig,
-                                    extra_args)
+        do_mig_param = {"vm": vm, "mig_test": migration_test, "src_uri": None, "dest_uri": dest_uri,
+                        "options": options, "virsh_options": virsh_options, "extra": extra,
+                        "action_during_mig": action_during_mig, "extra_args": extra_args}
+        migration_base.do_migration(do_mig_param)
 
         func_returns = dict(migration_test.func_ret)
         migration_test.func_ret.clear()
@@ -161,12 +154,12 @@ def run(test, params, env):
             action_during_mig = migration_base.parse_funcs(params.get('action_during_mig_again'),
                                                            test, params)
             extra_args['status_error'] = params.get("migrate_again_status_error", "no")
-            migration_base.do_migration(vm, migration_test, None, dest_uri,
-                                        options, virsh_options,
-                                        extra, action_during_mig,
-                                        extra_args)
+            do_mig_param = {"vm": vm, "mig_test": migration_test, "src_uri": None, "dest_uri": dest_uri,
+                            "options": options, "virsh_options": virsh_options, "extra": extra,
+                            "action_during_mig": action_during_mig, "extra_args": extra_args}
+            migration_base.do_migration(do_mig_param)
         if int(migration_test.ret.exit_status) == 0:
-            migration_test.post_migration_check([vm], params, uri=dest_uri)
+            migration_test.post_migration_check([vm], params, dest_uri=dest_uri)
     finally:
         logging.info("Recover test environment")
         vm.connect_uri = bk_uri

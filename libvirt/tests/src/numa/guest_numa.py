@@ -1,5 +1,5 @@
 import re
-import logging
+import logging as log
 import platform
 
 from avocado.utils import process
@@ -12,6 +12,11 @@ from virttest import utils_libvirtd
 from virttest import test_setup
 from virttest import utils_params
 from virttest import libvirt_version
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def handle_param(param_tuple, params):
@@ -105,15 +110,15 @@ def run(test, params, env):
         if (machine_ver.startswith("pc-q35-rhel") and
                 machine_ver > 'pc-q35-rhel8.2.0' and
                 libvirt_version.version_compare(6, 4, 0)):
-            # Replace 'node,nodeid=0,cpus=0-1,mem=512' with
+            # Replace 'node,nodeid=0,cpus=0-1,mem=1024' with
             # 'node,nodeid=0,cpus=0-1,memdev=ram-node0'
-            # Replace 'node,nodeid=1,cpus=2-3,mem=512' with
+            # Replace 'node,nodeid=1,cpus=2-3,mem=1024' with
             # 'node,nodeid=1,cpus=2-3,memdev=ram-node1'
             for cmd in cmdline_list:
                 line = cmd['cmdline']
                 try:
                     node = line.split(',')[1][-1]
-                    cmd['cmdline'] = line.replace('mem=512',
+                    cmd['cmdline'] = line.replace('mem=1024',
                                                   'memdev=ram-node{}'.format(node))
                 # We can skip replacing, when the cmdline parameter is empty.
                 except IndexError:
@@ -316,9 +321,13 @@ def run(test, params, env):
                     node_dict = i.copy()
                     node_dict['num'] = node_val
                     backup_list.append(node_dict)
-                    hp_cl.set_node_num_huge_pages(i['num'],
-                                                  i['nodenum'],
-                                                  i['size'])
+                    try:
+                        hp_cl.set_node_num_huge_pages(i['num'],
+                                                      i['nodenum'],
+                                                      i['size'])
+                    except ValueError as details:
+                        if "please check if the node has enough memory" in str(details):
+                            test.cancel(str(details))
                     node_val_after_set = hp_cl.get_node_num_huge_pages(i['nodenum'],
                                                                        i['size'])
                     if node_val_after_set < int(i['num']):
@@ -355,14 +364,7 @@ def run(test, params, env):
         # hugepages setting
         if page_list:
             membacking = libvirt_xml.vm_xml.VMMemBackingXML()
-            hugepages = libvirt_xml.vm_xml.VMHugepagesXML()
-            pagexml_list = []
-            for i in range(len(page_list)):
-                pagexml = hugepages.PageXML()
-                pagexml.update(page_list[i])
-                pagexml_list.append(pagexml)
-            hugepages.pages = pagexml_list
-            membacking.hugepages = hugepages
+            membacking.setup_attrs(hugepages={'pages': page_list})
             vmxml.mb = membacking
 
         logging.debug("vm xml is %s", vmxml)

@@ -1,7 +1,7 @@
 import os
 import time
 import re
-import logging
+import logging as log
 import signal
 import aexpect
 import shutil
@@ -23,6 +23,11 @@ from virttest.libvirt_xml.devices.panic import Panic
 from virttest.libvirt_xml.devices.watchdog import Watchdog
 
 from xml.dom.minidom import parseString
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -167,9 +172,14 @@ def run(test, params, env):
             cpu_idx += 2
             numa_dict_list.append(numa_dict)
             numa_dict = {}
+        if vmxml.xmltreefile.find('cpu'):
+            vmxml_cpu = vmxml.cpu
+            logging.debug("Existing cpu configuration in guest xml:\n%s", vmxml_cpu)
+            vmxml_cpu.mode = 'host-model'
+        else:
+            vmxml_cpu = vm_xml.VMCPUXML()
+            vmxml_cpu.xml = "<cpu mode='host-model'><numa/></cpu>"
         vmxml.vcpu = numa_nodes * 2
-        vmxml_cpu = vm_xml.VMCPUXML()
-        vmxml_cpu.xml = "<cpu><numa/></cpu>"
         vmxml_cpu.numa_cell = vmxml_cpu.dicts_to_cells(numa_dict_list)
         logging.debug(vmxml_cpu.numa_cell)
         vmxml.cpu = vmxml_cpu
@@ -207,7 +217,7 @@ def run(test, params, env):
                             dom.pause()
 
                 if event == "undefine":
-                    virsh.undefine(dom.name, **virsh_dargs)
+                    virsh.undefine(dom.name, options='--nvram', **virsh_dargs)
                     expected_events_list.append("'lifecycle' for %s:"
                                                 " Undefined Removed")
                 elif event == "create":
@@ -320,6 +330,14 @@ def run(test, params, env):
                 elif event == "reset":
                     virsh.reset(dom.name, **virsh_dargs)
                     expected_events_list.append("'reboot' for %s")
+                elif event == "reboot_from_console":
+                    session = dom.wait_for_login()
+                    try:
+                        session.cmd("shutdown -r now")
+                    except ShellProcessTerminatedError:
+                        logging.info("Shell terminated as host restarts as expected.")
+                    session.close()
+                    expected_events_list.append("'reboot' for %s")
                 elif event == "vcpupin":
                     virsh.vcpupin(dom.name, '0', '0', **virsh_dargs)
                     expected_events_list.append("'tunable' for %s:"
@@ -336,6 +354,11 @@ def run(test, params, env):
                     add_disk(dom.name, new_disk, 'vdb', '')
                     expected_events_list.append("'device-added' for %s:"
                                                 " virtio-disk1")
+
+                    def _check_disk(target):
+                        return target not in dom.get_blk_devices()
+
+                    utils_misc.wait_for(lambda: not _check_disk('vdb'), 10, 3)
                     virsh.detach_disk(dom.name, 'vdb', **virsh_dargs)
                     expected_events_list.append("'device-removed' for %s:"
                                                 " virtio-disk1")
@@ -354,7 +377,7 @@ def run(test, params, env):
                     virsh.domblkthreshold(vm_name, 'vdb', '100M')
                     session = dom.wait_for_login()
                     session.cmd("mkfs.ext4 /dev/vdb && mount /dev/vdb /mnt && ls /mnt && "
-                                "dd if=/dev/urandom of=/mnt/bigfile bs=1M count=300 && sync")
+                                "dd if=/dev/urandom of=/mnt/bigfile bs=1M count=300 && sync", timeout=90)
                     time.sleep(5)
                     session.close()
                     expected_events_list.append("'block-threshold' for %s:"

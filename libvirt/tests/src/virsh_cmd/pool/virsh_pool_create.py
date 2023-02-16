@@ -1,5 +1,5 @@
 import os
-import logging
+import logging as log
 
 from avocado.utils import process
 from virttest import virsh
@@ -10,6 +10,11 @@ from virttest.utils_test import libvirt as utlv
 from virttest.libvirt_xml import pool_xml
 
 from virttest import libvirt_version
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -96,7 +101,7 @@ def run(test, params, env):
     if pool_xml_f == "invalid-pool-xml":
         tmp_xml_f = xml_utils.TempXMLFile()
         tmp_xml_f.write('"<pool><<<BAD>>><\'XML</name\>'
-                        '!@#$%^&*)>(}>}{CORRUPTE|>!</pool>')
+                        '!@#$%^&*)>(}>}{CORRUPTE|>!</pool>'.encode())
         tmp_xml_f.flush()
         pool_xml_f = tmp_xml_f.name
     # Readonly mode

@@ -1,4 +1,4 @@
-import logging
+import logging as log
 import time
 import re
 
@@ -13,6 +13,11 @@ from virttest.libvirt_xml.devices.interface import Interface
 from avocado.utils import process
 
 from virttest import libvirt_version
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -248,7 +253,7 @@ def run(test, params, env):
         iface.model = iface_model
         iface.coalesce = {'max': coalesce_value}
         if network_type == "ovsbridge" and iface_type == "bridge":
-            iface.virtualport_type = "openvswitch"
+            iface.setup_attrs(virtualport={'type': "openvswitch"})
 
         if not hotplug_iface:
             vmxml.devices = xml_devices

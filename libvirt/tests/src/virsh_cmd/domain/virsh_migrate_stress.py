@@ -1,4 +1,4 @@
-import logging
+import logging as log
 
 from virttest import libvirt_vm
 from virttest import utils_test
@@ -8,6 +8,11 @@ from virttest import migration
 from virttest import remote
 from virttest.libvirt_xml import vm_xml
 from virttest.staging import utils_memory
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def set_cpu_memory(vm_name, cpu, memory):
@@ -68,7 +73,7 @@ def do_stress_migration(vms, srcuri, desturi, migration_type, test, params,
             test.fail(info)
 
         uptime = migrate_setup.post_migration_check(vms, params, uptime,
-                                                    uri=desturi)
+                                                    dest_uri=desturi)
         if migrate_back and "cross" not in migration_type:
             migrate_setup.migrate_pre_setup(srcuri, params)
             logging.debug("Migrating back to source from %s to %s for %s time",
@@ -150,7 +155,7 @@ def run(test, params, env):
             # remove package manager installed tool to avoid conflict
             if not utils_package.package_remove(stress_tool, session=remote_session):
                 logging.error("Existing %s is not removed")
-            if("stess-ng" in stress_tool and
+            if ("stess-ng" in stress_tool and
                'Ubuntu' in utils_misc.get_distro(session=remote_session)):
                 params['stress-ng_dependency_packages_list'] = ubuntu_dep
 
@@ -177,7 +182,7 @@ def run(test, params, env):
                     logging.error("Existing %s is not removed")
                 # configure stress in VM
                 if vms_stress:
-                    if("stress-ng" in stress_tool and
+                    if ("stress-ng" in stress_tool and
                        'Ubuntu' in utils_misc.get_distro(session=session)):
                         params['stress-ng_dependency_packages_list'] = ubuntu_dep
                     try:

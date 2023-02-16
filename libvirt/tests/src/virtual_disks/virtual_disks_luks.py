@@ -1,6 +1,6 @@
 import os
 import re
-import logging
+import logging as log
 import aexpect
 import platform
 import time
@@ -24,6 +24,11 @@ from virttest.libvirt_xml.devices.disk import Disk
 from virttest import libvirt_version
 
 TMP_DATA_DIR = data_dir.get_data_dir()
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -508,7 +513,7 @@ def run(test, params, env):
             transient_vmxml = vm_xml.VMXML.new_from_inactive_dumpxml(vm_name)
             if vm.is_alive():
                 vm.destroy(gracefully=False)
-            virsh.undefine(vm_name, debug=True, ignore_status=False)
+            virsh.undefine(vm_name, options='--nvram', debug=True, ignore_status=False)
             virsh.create(transient_vmxml.xml, ignore_status=False, debug=True)
             expected_top_image = vm.get_blk_devices()[device_target].get('source')
             options = params.get("blockcopy_options")

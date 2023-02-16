@@ -1,19 +1,28 @@
 import os
-import logging
+import logging as log
 import time
 import threading
 
 from avocado.utils import process
+from avocado.utils import path as utils_path
 
 from virttest import virsh
 from virttest import utils_test
 from virttest import utils_misc
 from virttest import libvirt_version
+from virttest import utils_libvirtd
+from virttest import utils_package
 from virttest.libvirt_xml import vm_xml
 from virttest.staging import utils_memory
+from virttest.utils_config import LibvirtQemuConfig
 from virttest.utils_test import libvirt_device_utils
 from virttest.utils_test import libvirt
 from virttest.utils_libvirt import libvirt_pcicontr
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -45,6 +54,8 @@ def run(test, params, env):
             expected_results += ",posix_lock"
         else:
             expected_results += ",no_posix_lock"
+        if thread_pool_size:
+            expected_results += " --thread-pool-size=%s" % thread_pool_size
         logging.debug(expected_results)
         return expected_results
 
@@ -76,7 +87,8 @@ def run(test, params, env):
                     if status != 0:
                         session.close()
                         test.fail("Write data failed: %s" % output)
-                md5_value = session.cmd_status_output("md5sum %s" % filename_guest)[1].strip().split()[0]
+                md5_value = session.cmd_status_output("md5sum %s" % filename_guest,
+                                                      timeout=300)[1].strip().split()[0]
                 md5s.append(md5_value)
                 logging.debug(md5_value)
                 md5_value = process.run("md5sum %s" % filename_guest).stdout_text.strip().split()[0]
@@ -146,6 +158,35 @@ def run(test, params, env):
                 session.cmd('rm -rf %s' % mount_dir, ignore_all_errors=True)
             session.close()
 
+    def check_detached_xml(vm):
+        """
+        Check whether there is xml about the filesystem device
+        in the vm xml
+
+        :param vm: the vm to be checked
+        """
+        vmxml = vm_xml.VMXML.new_from_dumpxml(vm.name)
+        filesystems = vmxml.devices.by_device_tag('filesystem')
+        if filesystems:
+            test.fail("There should be no filesystem devices in guest "
+                      "xml after hotunplug")
+
+    def check_filesystem_in_guest(vm, fs_dev):
+        """
+        Check whether there is virtiofs in vm
+
+        :param vm: the vm to be checked
+        :param fs_dev: the virtiofs device to be checked
+        """
+        session = vm.wait_for_login()
+        mount_dir = '/var/tmp/' + fs_dev.target['dir']
+        cmd = "mkdir %s; mount -t virtiofs %s %s" % (mount_dir, fs_dev.target['dir'], mount_dir)
+        status, output = session.cmd_status_output(cmd, timeout=300)
+        session.cmd('rm -rf %s' % mount_dir, ignore_all_errors=True)
+        if not status:
+            test.fail("Mount virtiofs should failed after hotunplug device. %s" % output)
+        session.close()
+
     start_vm = params.get("start_vm", "no")
     vm_names = params.get("vms", "avocado-vt-vm1").split()
     cache_mode = params.get("cache_mode", "none")
@@ -154,6 +195,7 @@ def run(test, params, env):
     flock = params.get("flock", "on")
     xattr = params.get("xattr", "on")
     path = params.get("virtiofsd_path", "/usr/libexec/virtiofsd")
+    thread_pool_size = params.get("thread_pool_size")
     queue_size = int(params.get("queue_size", "512"))
     driver_type = params.get("driver_type", "virtiofs")
     guest_num = int(params.get("guest_num", "1"))
@@ -179,6 +221,7 @@ def run(test, params, env):
     destroy_start = params.get("destroy_start", "no") == "yes"
     bug_url = params.get("bug_url", "")
     script_content = params.get("stress_script", "")
+    stdio_handler_file = "file" == params.get("stdio_handler")
 
     fs_devs = []
     vms = []
@@ -188,6 +231,9 @@ def run(test, params, env):
     host_hp_size = utils_memory.get_huge_page_size()
     backup_huge_pages_num = utils_memory.get_num_huge_pages()
     huge_pages_num = 0
+
+    if hotplug_unplug and not utils_path.find_command("lsof", default=False):
+        test.cancel("Lsof command is required to run test, but not installed")
 
     if len(vm_names) != guest_num:
         test.cancel("This test needs exactly %d vms." % guest_num)
@@ -209,8 +255,10 @@ def run(test, params, env):
             source = {'socket': source_socket}
             target = {'dir': target_dir}
             if launched_mode == "auto":
-                binary_keys = ['path', 'cache_mode', 'xattr', 'lock_posix', 'flock']
-                binary_values = [path, cache_mode, xattr, lock_posix, flock]
+                binary_keys = ['path', 'cache_mode', 'xattr', 'lock_posix',
+                               'flock', 'thread_pool_size']
+                binary_values = [path, cache_mode, xattr, lock_posix,
+                                 flock, thread_pool_size]
                 binary_dict = dict(zip(binary_keys, binary_values))
                 source = {'dir': source_dir}
                 accessmode = "passthrough"
@@ -263,10 +311,15 @@ def run(test, params, env):
             libvirt_pcicontr.reset_pci_num(vm_names[index])
             result = virsh.start(vm_names[index], debug=True)
             if hotplug_unplug:
+                if stdio_handler_file:
+                    qemu_config = LibvirtQemuConfig()
+                    qemu_config.stdio_handler = "file"
+                    utils_libvirtd.Libvirtd().restart()
                 for fs_dev in fs_devs:
                     ret = virsh.attach_device(vm_names[index], fs_dev.xml,
                                               ignore_status=True, debug=True)
                     libvirt.check_exit_status(ret, status_error)
+
                 if status_error:
                     return
             if status_error and not managedsave:
@@ -277,7 +330,7 @@ def run(test, params, env):
                 utils_test.libvirt.check_exit_status(result, expect_error=False)
             expected_results = generate_expected_process_option(expected_results)
             if launched_mode == "auto":
-                cmd = 'ps aux | grep virtiofsd | head -n 1'
+                cmd = 'ps aux | grep /usr/libexec/virtiofsd'
                 utils_test.libvirt.check_cmd_output(cmd, content=expected_results)
 
         if managedsave:
@@ -345,16 +398,34 @@ def run(test, params, env):
             elif hotplug_unplug:
                 for vm in vms:
                     umount_fs(vm)
-                    if detach_device_alias:
-                        alias = fs_dev.alias['name']
-                        ret = virsh.detach_device_alias(vm.name, alias,
-                                                        ignore_status=True, debug=True)
-                    else:
-                        ret = virsh.detach_device(vm.name, fs_dev.xml,
-                                                  ignore_status=True, debug=True)
-                    libvirt.check_exit_status(ret, status_error)
+                    for fs_dev in fs_devs:
+                        if detach_device_alias:
+                            utils_package.package_install("lsof")
+                            alias = fs_dev.alias['name']
+                            cmd = 'lsof /var/log/libvirt/qemu/%s-%s-virtiofsd.log' % (vm.name, alias)
+                            output = process.run(cmd).stdout_text.splitlines()
+                            for item in output[1:]:
+                                if stdio_handler_file:
+                                    if item.split()[0] != "virtiofsd":
+                                        test.fail("When setting stdio_handler as file, the command"
+                                                  "to write log should be virtiofsd!")
+                                else:
+                                    if item.split()[0] != "virtlogd":
+                                        test.fail("When setting stdio_handler as logd, the command"
+                                                  "to write log should be virtlogd!")
+                            ret = virsh.detach_device_alias(vm.name, alias, ignore_status=True,
+                                                            debug=True, wait_for_event=True,
+                                                            event_timeout=10)
+                        else:
+                            ret = virsh.detach_device(vm.name, fs_dev.xml, ignore_status=True,
+                                                      debug=True, wait_for_event=True)
+                        libvirt.check_exit_status(ret, status_error)
+                        check_filesystem_in_guest(vm, fs_dev)
+                    check_detached_xml(vm)
     finally:
         for vm in vms:
+            alias = fs_dev.alias['name']
+            process.run('rm -f /var/log/libvirt/qemu/%s-%s-virtiofsd.log' % (vm.name, alias))
             if vm.is_alive():
                 umount_fs(vm)
                 vm.destroy(gracefully=False)
@@ -366,3 +437,6 @@ def run(test, params, env):
         if launched_mode == "externally":
             process.run('restorecon %s' % path, ignore_status=False, shell=True)
         utils_memory.set_num_huge_pages(backup_huge_pages_num)
+        if stdio_handler_file:
+            qemu_config.restore()
+            utils_libvirtd.Libvirtd().restart()

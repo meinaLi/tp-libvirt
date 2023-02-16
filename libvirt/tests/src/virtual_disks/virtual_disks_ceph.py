@@ -1,7 +1,7 @@
 import os
 import re
 import time
-import logging
+import logging as log
 import shutil
 import aexpect
 
@@ -33,6 +33,11 @@ from virttest import data_dir
 from virttest import libvirt_version
 
 TMP_DATA_DIR = data_dir.get_data_dir()
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -898,7 +903,7 @@ def run(test, params, env):
             vmxml_for_test = vm_xml.VMXML.new_from_inactive_dumpxml(vm_name)
             if vm.is_alive():
                 vm.destroy(gracefully=False)
-            vm.undefine()
+            vm.undefine(options='--nvram')
             if virsh.create(vmxml_for_test.xml, **virsh_dargs).exit_status:
                 vmxml_backup.define()
                 test.fail("Can't create the domain")
@@ -977,7 +982,7 @@ def run(test, params, env):
                 ret = virsh.detach_device(guest_name, xml_file, wait_for_event=True)
                 libvirt.check_exit_status(ret)
         elif attach_disk:
-            ret = virsh.detach_disk(vm_name, targetdev, wait_remove_event=True)
+            ret = virsh.detach_disk(vm_name, targetdev, wait_for_event=True)
             libvirt.check_exit_status(ret)
 
         # Check disk in vm after detachment.
@@ -1012,7 +1017,7 @@ def run(test, params, env):
             vm.destroy(gracefully=False)
         if additional_guest:
             virsh.remove_domain(guest_name,
-                                "--remove-all-storage",
+                                "--remove-all-storage --nvram",
                                 ignore_stauts=True)
         # Remove the snapshot.
         if create_snapshot:

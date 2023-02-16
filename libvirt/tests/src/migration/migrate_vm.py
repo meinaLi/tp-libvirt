@@ -1,4 +1,4 @@
-import logging
+import logging as log
 import os
 import re
 import signal
@@ -51,6 +51,11 @@ from virttest import libvirt_version
 MIGRATE_RET = False
 
 
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
+
+
 def destroy_active_pool_on_remote(params):
     """
     This is to destroy active pool with same target path as pool_target
@@ -59,6 +64,7 @@ def destroy_active_pool_on_remote(params):
     :return True if successful, otherwise False
     """
     ret = True
+    remote_session = None
 
     remote_ip = params.get("migrate_dest_host")
     remote_user = params.get("migrate_dest_user", "root")
@@ -75,7 +81,7 @@ def destroy_active_pool_on_remote(params):
         for pool in active_pools.stdout.strip().split("\n"):
             if pool is not '':
                 pool_dumpxml = pool_xml.PoolXML.new_from_dumpxml(pool, remote_session)
-                if(pool_dumpxml.target_path == params.get("pool_target")):
+                if (pool_dumpxml.target_path == params.get("pool_target")):
                     ret = remote_session.pool_destroy(pool)
     except Exception as e:
         logging.error("Exception when destroy active pool on target: %s", str(e))
@@ -2005,13 +2011,9 @@ def run(test, params, env):
             logging.info(output)
 
         target_image_source = test_dict.get("target_image_source", disk_source)
-        # Do not create target image when qemu supports drive-mirror
-        # and nbd-server, but need create a specific pool.
         no_create_pool = test_dict.get("no_create_pool", "no")
         try:
-            if ((utils_misc.is_qemu_capability_supported("drive-mirror") or
-                 libvirt_version.version_compare(5, 3, 0)) and
-                    utils_misc.is_qemu_capability_supported("nbd-server")):
+            if libvirt_version.version_compare(5, 3, 0):
                 support_precreation = True
         except exceptions.TestError as e:
             logging.debug(e)
@@ -2395,7 +2397,7 @@ def run(test, params, env):
                 else:
                     stderr = p.communicate()[1]
                     logging.debug(stderr)
-                    err_str = ".*error.*migration.*job: canceled by client"
+                    err_str = test_dict.get("err_msg")
                     if not re.search(err_str, stderr):
                         test.fail("Can't find error: %s." % err_str)
                     else:
@@ -2533,7 +2535,6 @@ def run(test, params, env):
                 guest_config.sub(pattern2repl)
 
                 logging.debug("Modify remote guest xml's machine type")
-                machine_type = "pc"
                 arch = platform.machine()
                 if arch.count("ppc64"):
                     machine_type = "pseries"
@@ -2545,7 +2546,7 @@ def run(test, params, env):
 
                 # undefine remote guest
                 logging.debug("Undefine remote guest")
-                remote_virsh_session.undefine(target_vm_name)
+                remote_virsh_session.undefine(target_vm_name, options="--nvram")
 
                 # redefine remote guest using updated XML
                 logging.debug("Redefine remote guest")
@@ -2799,7 +2800,7 @@ def run(test, params, env):
         logging.info("Recovery test environment")
 
         logging.debug("Removing vm on remote if it exists.")
-        virsh.remove_domain(vm.name, uri=uri)
+        virsh.remove_domain(vm.name, options='--nvram', uri=uri)
         if src_libvirt_file:
             src_libvirt_file.restore()
         if remote_libvirt_file:

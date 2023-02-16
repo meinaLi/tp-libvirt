@@ -1,4 +1,4 @@
-import logging
+import logging as log
 import platform
 
 import aexpect
@@ -11,6 +11,11 @@ from virttest.libvirt_xml import vm_xml
 
 
 CMD_TIMEOUT = 30
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def xml_console_config(vm_name, serial_type='pty',
@@ -110,11 +115,12 @@ def check_duplicated_console(command, force_command, status_error, login_user,
     session.close()
 
 
-def check_disconnect_on_shutdown(command, status_error, login_user,
+def check_disconnect_on_shutdown(vm, command, status_error, login_user,
                                  login_passwd, test):
     """
     Test whether an active console will disconnect after shutting down the VM.
 
+    :param vm: VM instance
     :param command: Test command without --force option
     :param status_error: Whether the command is fault.
     :param login_user: User name for logging into the VM.
@@ -163,6 +169,10 @@ def check_disconnect_on_shutdown(command, status_error, login_user,
             logging.debug("Shell terminated on VM shutdown:\n%s\n%s",
                           detail, log)
             session.close()
+            # Need destroy VM explicitly if exception happens
+            vm.destroy()
+            # Confirm vm is down
+            vm.wait_for_shutdown()
 
 
 def run(test, params, env):
@@ -259,7 +269,7 @@ def run(test, params, env):
 
         check_duplicated_console(command, force_command, status_error,
                                  login_user, login_passwd, test)
-        check_disconnect_on_shutdown(command, status_error, login_user,
+        check_disconnect_on_shutdown(vm, command, status_error, login_user,
                                      login_passwd, test)
     finally:
         # Recover state of vm.

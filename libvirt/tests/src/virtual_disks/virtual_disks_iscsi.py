@@ -1,7 +1,7 @@
 import os
 import re
 import locale
-import logging
+import logging as log
 import base64
 
 import aexpect
@@ -20,6 +20,11 @@ from virttest.libvirt_xml.devices.disk import Disk
 from virttest.libvirt_xml.devices.controller import Controller
 
 from virttest import libvirt_version
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -350,7 +355,7 @@ def run(test, params, env):
             if (libvirt_version.version_compare(4, 3, 0) and
                     (auth_uuid or auth_usage) and
                     chap_passwd):
-                if(check_auth_plaintext(vm_name, chap_passwd)):
+                if (check_auth_plaintext(vm_name, chap_passwd)):
                     test.fail("Libvirt should not pass plaintext of chap "
                               "password to qemu-kvm.")
 

@@ -1,4 +1,4 @@
-import logging
+import logging as log
 
 from virttest import virsh
 from virttest import utils_misc
@@ -8,6 +8,11 @@ from virttest.libvirt_xml.vm_xml import VMXML
 from virttest.libvirt_xml.devices.controller import Controller
 from virttest.libvirt_xml.devices.sound import Sound
 from virttest.libvirt_xml.devices.interface import Interface
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -147,7 +152,7 @@ def run(test, params, env):
             logging.debug('address: %s', new_iface_kwargs['address'])
             iface = create_iface(iface_model, iface_source, **new_iface_kwargs)
             mac = iface.mac_address
-
+            logging.debug('Before attaching %s\n', virsh.dumpxml(vm_name))
             result = virsh.attach_device(vm_name, iface.xml, debug=True)
             libvirt.check_exit_status(result)
 
@@ -159,7 +164,7 @@ def run(test, params, env):
             iface_list = [
                 iface for iface in xml_after_attach.get_devices('interface')
                 if iface.mac_address == mac and
-                int(iface.address['attrs']['bus'], 16) == int(pci_br_index, 16)
+                int(iface.address['attrs']['bus'], 16) == int(pci_br_index)
             ]
 
             logging.debug('iface list after attach: %s', iface_list)
@@ -223,6 +228,10 @@ def run(test, params, env):
 
             # Attach device with invalid slot to pcie-to-pci-bridge
             if case == 'attach_with_invalid_slot':
+                target_bus = cur_pci_br[0].index
+                target_bus = hex(int(target_bus))
+                iface_kwargs['address'] = iface_kwargs['address'] % target_bus
+                logging.debug('iface_kwargs is updated to: %s', iface_kwargs)
                 iface = create_iface(iface_model, iface_source, **iface_kwargs)
                 vmxml.add_device(iface)
                 result_to_check = virsh.define(vmxml.xml, debug=True)

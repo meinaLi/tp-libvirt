@@ -1,4 +1,4 @@
-import logging
+import logging as log
 
 from virttest import libvirt_xml
 from virttest import utils_config
@@ -7,7 +7,12 @@ from virttest import utils_misc
 from virttest import virsh
 
 from virttest.utils_test import libvirt
-from virttest.libvirt_xml.devices import librarian
+from virttest.libvirt_xml.devices.serial import Serial
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def check_pty_log_file(file_path, boot_prompt):
@@ -19,7 +24,7 @@ def check_pty_log_file(file_path, boot_prompt):
     :return: True or False according the result of finding
     """
 
-    with open(file_path) as fp:
+    with open(file_path, errors='ignore') as fp:
         contents = fp.read()
     logging.debug("The contents of log file are : %s" % contents)
     ret = contents.find(boot_prompt)
@@ -39,7 +44,7 @@ def run(test, params, env):
 
         :return: the serial device xml object
         """
-        serial = librarian.get('serial')(serial_type)
+        serial = Serial(serial_type)
 
         serial.target_port = target_port
         serial.target_type = target_type
@@ -92,7 +97,7 @@ def run(test, params, env):
 
         # Need to wait for a while to get login prompt
         if not utils_misc.wait_for(
-                lambda: check_pty_log_file(log_file, boot_prompt), 3):
+                lambda: check_pty_log_file(log_file, boot_prompt), 6):
             test.fail("Failed to find the vm login prompt from %s" % log_file)
 
     except Exception as e:

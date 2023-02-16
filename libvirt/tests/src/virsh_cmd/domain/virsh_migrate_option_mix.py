@@ -1,4 +1,4 @@
-import logging
+import logging as log
 import time
 import re
 
@@ -14,6 +14,11 @@ from virttest.utils_test import libvirt
 from virttest.libvirt_xml import vm_xml
 from virttest.libvirt_xml.devices import graphics
 from virttest.libvirt_xml.xcepts import LibvirtXMLNotFoundError
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -37,7 +42,7 @@ def run(test, params, env):
         if vm.is_alive():
             vm.destroy()
         if vm.is_persistent():
-            vm.undefine()
+            vm.undefine(options='--nvram')
 
         # Restore vm connect_uri
         vm.connect_uri = uri_bak
@@ -217,7 +222,7 @@ def run(test, params, env):
             vm_xml_backup.define()
         elif src_vm_cfg == "transient" and vm.is_persistent():
             logging.debug("Make src vm transient")
-            vm.undefine()
+            vm.undefine(options='--keep-nvram')
 
         # Prepare for postcopy migration: install and run stress in VM
         if postcopy and src_vm_status == "running":
@@ -476,6 +481,8 @@ def run(test, params, env):
             # Check dst VM uptime after migration
             # Note: migrated_vm_uptime should be greater than the vm_uptime got
             # before migration
+            if vm.serial_console is None:
+                vm.create_serial_console()
             migrated_vm_uptime = vm.uptime(connect_uri=dest_uri)
             logging.info("Check VM uptime in destination after "
                          "migration: %s", migrated_vm_uptime)

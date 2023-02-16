@@ -1,4 +1,4 @@
-import logging
+import logging as log
 import re
 
 from avocado.utils import process
@@ -11,6 +11,11 @@ from virttest import virsh
 
 from virttest.staging import utils_cgroup
 from virttest.utils_misc import get_dev_major_minor
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def check_blkiotune(test, params):
@@ -201,6 +206,14 @@ def set_blkio_parameter(test, params, cgstop):
                           " inconsistent with blkiotune XML or/and"
                           " blkio.weight and blkio.weight_device"
                           " value from cgroup blkio controller")
+
+    # Start Vm if needed
+    validate_vm_not_start = "yes" == params.get("validate_vm_not_start", "no")
+    if validate_vm_not_start:
+        result = virsh.start(vm_name, debug=True)
+        vm_not_start_error_msg = params.get("vm_not_start_error_msg")
+        if vm_not_start_error_msg not in result.stderr_text:
+            test.fail("can not find error message: %s" % vm_not_start_error_msg)
 
 
 def prepare_scheduler(params, test, vm):

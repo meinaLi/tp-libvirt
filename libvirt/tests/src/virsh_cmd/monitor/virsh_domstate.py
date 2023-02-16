@@ -1,7 +1,7 @@
 import re
 import os
 import shutil
-import logging
+import logging as log
 import platform
 import signal
 
@@ -23,6 +23,11 @@ from virttest.libvirt_xml.devices.panic import Panic
 from virttest import libvirt_version
 
 find_dump_file = False
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def check_crash_state(cmd_output, crash_action, vm_name, dump_file=""):
@@ -237,7 +242,7 @@ def run(test, params, env):
         # Timing issue cause test to check domstate before prior action
         # kill gets completed
         if vm_action == "kill":
-            utils_misc.wait_for(vm.is_dead, timeout=20)
+            utils_misc.wait_for(vm.is_dead, timeout=30)
 
         if remote_uri:
             remote_ip = params.get("remote_ip", "REMOTE.EXAMPLE.COM")

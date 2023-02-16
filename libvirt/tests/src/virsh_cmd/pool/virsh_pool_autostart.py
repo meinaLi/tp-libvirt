@@ -1,5 +1,5 @@
 import os
-import logging
+import logging as log
 
 from avocado.utils import process
 from avocado.core import exceptions
@@ -12,6 +12,11 @@ from virttest.libvirt_xml import pool_xml
 from virttest.staging import lv_utils
 
 from virttest import libvirt_version
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -85,8 +90,8 @@ def run(test, params, env):
             actual_value = libvirt_pool.pool_autostart(pool_name)
         if actual_value != expect_value:
             if not expect_error:
-                if checkpoint == 'State' and pool_type in ("dir", "scsi"):
-                    debug_msg = "Dir pool should be always active when libvirtd restart. "
+                if checkpoint == 'State' and pool_type in ("dir", "scsi", "disk"):
+                    debug_msg = "Dir/scsi/disk pool should be active when libvirtd restart. "
                     debug_msg += "See https://bugzilla.redhat.com/show_bug.cgi?id=1238610"
                     logging.debug(debug_msg)
                 else:

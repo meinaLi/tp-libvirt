@@ -1,7 +1,7 @@
 import os
 import re
 import time
-import logging
+import logging as log
 
 from avocado.utils import process
 from avocado.utils import software_manager
@@ -16,6 +16,11 @@ from virttest.libvirt_xml import vm_xml
 from virttest.utils_test import libvirt
 from virttest.staging.service import Factory
 from virttest.staging.utils_memory import drop_caches
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -105,12 +110,12 @@ def run(test, params, env):
         if not os.path.exists(managed_save_file):
             test.fail("Can't find managed save image")
         #undefine domain with no options.
-        if not virsh.undefine(vm_name, options=None,
+        if not virsh.undefine(vm_name, options='--nvram',
                               ignore_status=True).exit_status:
             test.fail("Guest shouldn't be undefined"
                       "while domain managed save image exists")
         #undefine domain with managed-save option.
-        if virsh.undefine(vm_name, options="--managed-save",
+        if virsh.undefine(vm_name, options="--managed-save --nvram",
                           ignore_status=True).exit_status:
             test.fail("Guest can't be undefine with "
                       "managed-save option")
@@ -342,6 +347,11 @@ def run(test, params, env):
     libvirtd = utils_libvirtd.Libvirtd()
     # Get config files.
     qemu_config = utils_config.LibvirtQemuConfig()
+    libvirt_guests_file = "/etc/sysconfig/libvirt-guests"
+    libvirt_guests_file_create = False
+    if not os.path.exists(libvirt_guests_file):
+        process.run("touch %s" % libvirt_guests_file, verbose=True)
+        libvirt_guests_file_create = True
     libvirt_guests_config = utils_config.LibvirtGuestsConfig()
     # Get libvirt-guests service
     libvirt_guests = Factory.create_service("libvirt-guests")
@@ -386,7 +396,7 @@ def run(test, params, env):
                 vm.destroy(gracefully=False)
             # Wait for VM to be in shut off state
             utils_misc.wait_for(lambda: vm.state() == "shut off", 10)
-            vm.undefine()
+            virsh.undefine(vm_name, '--nvram', debug=True, ignore_status=False)
             if virsh.create(vmxml_for_test.xml, ignore_status=True,
                             debug=True).exit_status:
                 vmxml_backup.define()
@@ -511,6 +521,8 @@ def run(test, params, env):
         qemu_config.restore()
         libvirt_guests_config.restore()
         libvirtd.restart()
+        if libvirt_guests_file_create:
+            os.remove(libvirt_guests_file)
         if autostart_bypass_cache:
             virsh.autostart(vm_name, "--disable",
                             ignore_status=True, debug=True)

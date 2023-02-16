@@ -1,5 +1,5 @@
 import os
-import logging
+import logging as log
 import shutil
 import time
 import platform
@@ -19,6 +19,11 @@ from virttest import libvirt_version
 from virttest.libvirt_xml import vm_xml
 from virttest.libvirt_xml.xcepts import LibvirtXMLError
 from virttest.utils_test import libvirt as utlv
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -58,7 +63,7 @@ def run(test, params, env):
     if wipe_data:
         option += " --wipe-storage"
     nvram_o = None
-    if platform.machine() == 'aarch64':
+    if platform.machine() in ['aarch64', 'x86_64']:
         nvram_o = " --nvram"
         option += nvram_o
 
@@ -181,7 +186,7 @@ def run(test, params, env):
                 session = remote.remote_login("ssh", remote_ip, "22",
                                               remote_user, remote_pwd,
                                               remote_prompt)
-                cmd_undefine = "virsh -c %s undefine %s" % (uri, vm_name)
+                cmd_undefine = "virsh -c %s undefine %s --nvram" % (uri, vm_name)
                 status, output = session.cmd_status_output(cmd_undefine)
                 logging.info("Undefine output: %s", output)
             except (process.CmdError, remote.LoginError, aexpect.ShellError) as de:

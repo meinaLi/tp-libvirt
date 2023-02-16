@@ -1,5 +1,6 @@
-import logging
+import logging as log
 
+from provider.sriov import check_points
 from provider.sriov import sriov_base
 
 from virttest import utils_libvirtd
@@ -15,18 +16,22 @@ from virttest.utils_libvirt import libvirt_vmxml
 from virttest.utils_test import libvirt
 
 
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
+
+
 def create_network(params):
     """
     Create VF pool
     """
-    net_dict = {"net_name": params.get("net_name"),
-                "net_forward": params.get("net_forward")}
+    net_dict = {"name": params.get("net_name"),
+                "forward": eval(params.get("net_forward"))}
     net_forward_pf = "yes" == params.get("net_forward_pf")
     if net_forward_pf:
-        net_dict.update(
-            {"net_forward_pf": '{"dev": "%s"}' % params.get("pf_name")})
+        net_dict.update({'pf': {'dev': params.get("pf_name")}})
     else:
-        net_dict.update({"forward_iface": params.get("vf_iface")})
+        net_dict.update({"forward_interface": [{"dev": params.get("vf_iface")}]})
     libvirt_network.create_or_del_network(net_dict)
 
 
@@ -78,7 +83,7 @@ def run(test, params, env):
             virsh.attach_device(vm_name, iface.xml, debug=True,
                                 ignore_status=False)
         libvirt_vmxml.check_guest_xml(vm.name, params["net_name"])
-        sriov_base.check_vm_network_accessed(vm_session)
+        check_points.check_vm_network_accessed(vm_session)
 
     def test_connection():
         """
@@ -118,6 +123,7 @@ def run(test, params, env):
         mac_addr = vm_ifaces[0].get_mac_address()
         opts = ' '.join([iface_type, "--mac %s" % mac_addr])
         virsh.detach_interface(vm_name, option=opts, debug=True,
+                               wait_for_event=True,
                                ignore_status=False)
         libvirt_network.check_network_connection(net_name, vf_no-1)
 
@@ -160,4 +166,4 @@ def run(test, params, env):
             vm.destroy(gracefully=False)
         orig_config_xml.sync()
         libvirt_network.create_or_del_network(
-            {"net_name": params.get("net_name")}, True)
+            {"name": params.get("net_name")}, True)

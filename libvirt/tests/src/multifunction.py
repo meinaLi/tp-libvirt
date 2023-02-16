@@ -1,4 +1,4 @@
-import logging
+import logging as log
 import os
 
 from avocado.utils import process
@@ -11,6 +11,11 @@ from virttest import data_dir
 from virttest.libvirt_xml import xcepts
 from virttest.libvirt_xml import vm_xml
 from virttest.libvirt_xml.devices import disk
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 class MFError(Exception):
@@ -33,7 +38,7 @@ def cleanup_vm(vm_name=None, disk_removed=None):
     """
     try:
         if vm_name is not None:
-            virsh.undefine(vm_name)
+            virsh.undefine(vm_name, options='--nvram')
     except process.CmdError:
         pass
     try:
@@ -146,7 +151,7 @@ def create_disk_xml(params):
     diskxml.target = {'dev': target_dev, 'bus': target_bus}
     diskxml.address = diskxml.new_disk_address(addr_type, attrs=addr_attr)
     logging.debug("Disk XML:\n%s", str(diskxml))
-    return diskxml.xml
+    return diskxml
 
 
 def device_exists(vm, target_dev):
@@ -170,7 +175,7 @@ def attach_additional_device(vm_name, disksize, targetdev, params):
     logging.info("Attaching disk...")
     disk_path = os.path.join(data_dir.get_tmp_dir(), targetdev)
     cmd = "qemu-img create %s %s" % (disk_path, disksize)
-    ret = process.run(cmd, shell=True, allow_output_check='combined')
+    ret = process.run(cmd, shell=True)
     status, output = ret.exit_status, ret.stdout_text.strip()
     if status:
         return (False, output)
@@ -180,12 +185,12 @@ def attach_additional_device(vm_name, disksize, targetdev, params):
     params['target_dev'] = targetdev
 
     # Create a file of device
-    xmlfile = create_disk_xml(params)
+    xmlobj = create_disk_xml(params)
 
     # To confirm attached device do not exist.
     virsh.detach_disk(vm_name, targetdev, extra="--config")
 
-    return virsh.attach_device(vm_name, xmlfile,
+    return virsh.attach_device(vm_name, xmlobj.xml,
                                flagstr="--config", debug=True)
 
 

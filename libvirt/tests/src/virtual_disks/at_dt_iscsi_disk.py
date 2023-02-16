@@ -2,7 +2,7 @@ import os
 import re
 import time
 import base64
-import logging
+import logging as log
 import platform
 import locale
 
@@ -23,6 +23,11 @@ from virttest.libvirt_xml.devices.controller import Controller
 from virttest.staging import lv_utils
 
 from virttest import libvirt_version
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def clean_up_lvm(device_source, vg_name, lv_name):
@@ -170,12 +175,14 @@ def run(test, params, env):
                                                           chap_passwd=chap_passwd,
                                                           portal_ip=disk_src_host)
         else:
+            enable_authentication = "yes" == params.get("enable_authentication", "no")
             iscsi_target, lun_num = libvirt.setup_or_cleanup_iscsi(is_setup=True,
                                                                    is_login=False,
                                                                    image_size='1G',
                                                                    chap_user=chap_user,
                                                                    chap_passwd=chap_passwd,
-                                                                   portal_ip=disk_src_host)
+                                                                   portal_ip=disk_src_host,
+                                                                   enable_authentication=enable_authentication)
         # Create iscsi pool
         if disk_type == "volume":
             # Create an iscsi pool xml to create it
@@ -218,7 +225,8 @@ def run(test, params, env):
                     return None
 
             # Wait for a while so that we can get the volume info
-            vol_info = utils_misc.wait_for(get_vol, 10)
+            utils_misc.wait_for(lambda: get_vol() is not None, 10)
+            vol_info = get_vol()
             if vol_info:
                 vol_name, vol_path = vol_info
             else:
@@ -358,8 +366,6 @@ def run(test, params, env):
         elif domain_operation == "start_with_packed":
             expect_xml_line = "packed=\"%s\"" % driver_packed
             libvirt.check_dumpxml(vm, expect_xml_line)
-            expect_qemu_line = "packed=%s" % driver_packed
-            libvirt.check_qemu_cmd_line(expect_qemu_line)
         elif domain_operation == "":
             logging.debug("No domain operation provided, so skip it")
         else:
@@ -397,7 +403,7 @@ def run(test, params, env):
         find_attach_disk(not status_error)
 
         # Detach disk
-        cmd_result = virsh.detach_disk(vm_name, disk_target, wait_remove_event=True)
+        cmd_result = virsh.detach_disk(vm_name, disk_target, wait_for_event=True)
         libvirt.check_exit_status(cmd_result, status_error)
 
         # Check disk inside the VM

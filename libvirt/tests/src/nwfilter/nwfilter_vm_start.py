@@ -1,5 +1,5 @@
 import re
-import logging
+import logging as log
 import socket
 
 from avocado.utils import process
@@ -17,6 +17,11 @@ from virttest.libvirt_xml.devices import interface
 from virttest import utils_libguestfs
 from virttest import utils_net
 from virttest import libvirt_version
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -159,7 +164,8 @@ def run(test, params, env):
         if mount_noexec_tmp:
             device_name = utlv.setup_or_cleanup_iscsi(is_setup=True)
             utlv.mkfs(device_name, 'ext4')
-            cmd = "mount %s /tmp -o noexec,nosuid" % device_name
+            # update the tmp to /tmp/mnt since tmp directory is used for tpm device
+            cmd = "mkdir /tmp/mnt; mount %s /tmp/mnt -o noexec,nosuid" % device_name
             process.run(cmd, shell=True)
 
         if ipset_command:

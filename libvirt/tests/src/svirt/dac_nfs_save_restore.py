@@ -1,5 +1,6 @@
 import os
-import logging
+import pwd
+import logging as log
 
 from avocado.core import exceptions
 from avocado.utils import process
@@ -12,6 +13,11 @@ from virttest import utils_config
 from virttest import utils_libvirtd
 from virttest.utils_test import libvirt as utlv
 from virttest.libvirt_xml.vm_xml import VMXML
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def check_ownership(file_path):
@@ -32,6 +38,17 @@ def check_ownership(file_path):
     return label
 
 
+def set_tpm_perms(swtpm_lib):
+    """
+    Set the perms of swtpm lib dir to allow other users to write in the dir
+    :param swtpm_lib: the dir of swtpm lib
+    """
+    cmd = "getfacl -pR %s > /tmp/permis.facl" % swtpm_lib
+    process.run(cmd, ignore_status=True, shell=True)
+    cmd = "chmod -R 777 %s" % swtpm_lib
+    process.run(cmd, ignore_status=False, shell=True)
+
+
 def run(test, params, env):
     """
     Test DAC in save/restore domain to nfs pool.
@@ -45,6 +62,7 @@ def run(test, params, env):
     # Get general variables.
     status_error = ('yes' == params.get("status_error", 'no'))
     host_sestatus = params.get("dac_nfs_save_restore_host_selinux", "enforcing")
+    swtpm_lib = params.get("swtpm_lib")
     # Get qemu.conf config variables
     qemu_user = params.get("qemu_user")
     qemu_group = params.get("qemu_group")
@@ -106,6 +124,23 @@ def run(test, params, env):
                 os.chown(disk_path, 0, 0)
             elif qemu_user == "qemu":
                 os.chown(disk_path, 107, 107)
+
+        # Change ownership of VARS.fd file
+        if dynamic_ownership is False:
+            vars_path = None
+            if vmxml.os.xmltreefile.find('nvram') is not None:
+                vars_path = vmxml.os.nvram
+            elif vmxml.os.fetch_attrs().get('os_firmware') == 'efi':
+                vars_path = params.get('vars_path')
+
+            if vars_path is not None and os.path.exists(vars_path):
+                user_info = pwd.getpwnam(qemu_user)
+                os.chown(vars_path, user_info.pw_uid, user_info.pw_gid)
+
+            if vmxml.devices.by_device_tag('tpm') is not None:
+                qemu_conf.swtpm_user = qemu_user
+                qemu_conf.swtpm_group = qemu_group
+                set_tpm_perms(swtpm_lib)
 
         # Set selinux of host.
         utils_selinux.set_status(host_sestatus)
@@ -200,6 +235,7 @@ def run(test, params, env):
 
     finally:
         # clean up
+        virsh.destroy(vm_name, debug=True)
         for path, label in list(backup_labels_of_disks.items()):
             label_list = label.split(":")
             os.chown(path, int(label_list[0]), int(label_list[1]))
@@ -209,6 +245,11 @@ def run(test, params, env):
                                  emulated_image)
             except exceptions.TestFail as detail:
                 logging.error(str(detail))
+        if vmxml.devices.by_device_tag('tpm') is not None:
+            if os.path.isfile('/tmp/permis.facl'):
+                cmd = "setfacl --restore=/tmp/permis.facl"
+                process.run(cmd, ignore_status=True, shell=True)
+                os.unlink('/tmp/permis.facl')
         utils_selinux.set_status(backup_sestatus)
         qemu_conf.restore()
         libvirtd.restart()

@@ -1,4 +1,4 @@
-import logging
+import logging as log
 import time
 import ast
 
@@ -12,6 +12,11 @@ from virttest.libvirt_xml import vm_xml
 from virttest.libvirt_xml.devices.interface import Interface
 from virttest.utils_test import libvirt
 from avocado.utils import process
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -171,7 +176,8 @@ def run(test, params, env):
                                (iface_type, iface_source['network'],
                                 iface_model, mac, attach_option))
                     ret = virsh.attach_interface(vm_name, options,
-                                                 ignore_status=True)
+                                                 ignore_status=True,
+                                                 debug=True)
                 if ret.exit_status:
                     if any([msg in ret.stderr for msg in err_msgs]):
                         logging.debug("No more pci slots, can't attach more devices")
@@ -192,16 +198,16 @@ def run(test, params, env):
                         test.fail("Failed to attach-interface: %s" % ret.stderr.strip())
                 elif stress_test:
                     if attach_device:
-                        # Detach the device immediately for stress test
-                        ret = virsh.detach_device(vm_name, iface_xml_obj.xml,
-                                                  flagstr=detach_option,
-                                                  ignore_status=True)
+                        # Detach the device for stress test
+                        ret = utils_misc.wait_for(lambda: virsh.detach_device(vm_name, iface_xml_obj.xml,
+                                                                              flagstr=detach_option, debug=True),
+                                                  timeout=9, first=3, step=1)
                     elif attach_iface:
                         # Detach the device immediately for stress test
                         options = ("--type %s --mac %s %s" %
                                    (iface_type, mac, detach_option))
-                        ret = virsh.detach_interface(vm_name, options,
-                                                     ignore_status=True)
+                        ret = utils_misc.wait_for(lambda: virsh.detach_interface(vm_name, options, debug=True),
+                                                  timeout=9, first=3, step=1)
                     libvirt.check_exit_status(ret)
                 else:
                     if attach_device:

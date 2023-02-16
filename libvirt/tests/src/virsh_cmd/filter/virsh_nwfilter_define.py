@@ -1,5 +1,5 @@
 import os
-import logging
+import logging as log
 
 from virttest import virsh
 from virttest import xml_utils
@@ -10,6 +10,11 @@ from virttest.utils_test import libvirt as utlv
 from virttest import libvirt_version
 
 NWFILTER_ETC_DIR = "/etc/libvirt/nwfilter"
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def check_list(uuid, name):
@@ -76,7 +81,7 @@ def run(test, params, env):
         if filter_xml == "invalid-filter-xml":
             tmp_xml = xml_utils.TempXMLFile()
             tmp_xml.write('"<filter><<<BAD>>><\'XML</name\>'
-                          '!@#$%^&*)>(}>}{CORRUPTE|>!</filter>')
+                          '!@#$%^&*)>(}>}{CORRUPTE|>!</filter>'.encode())
             tmp_xml.flush()
             filter_xml = tmp_xml.name
             logging.info("Test invalid xml is: %s" % filter_xml)

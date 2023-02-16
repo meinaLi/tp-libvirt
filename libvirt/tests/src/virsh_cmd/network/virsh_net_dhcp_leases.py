@@ -1,5 +1,5 @@
 import re
-import logging
+import logging as log
 import signal
 
 from virttest import utils_net
@@ -13,6 +13,11 @@ from datetime import datetime, timedelta
 from virttest.libvirt_xml import LibvirtXMLError
 
 from virttest import libvirt_version
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -77,7 +82,7 @@ def run(test, params, env):
             new_host.attrs = host
             new_host.lease_attrs = host_lease
             ipxml.hosts = [new_host]
-        netxml.set_ip(ipxml)
+        netxml.add_ip(ipxml)
         netxml.create()
 
     def get_net_dhcp_leases(output):

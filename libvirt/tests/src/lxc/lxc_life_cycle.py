@@ -1,7 +1,7 @@
 import os
 import re
 import shutil
-import logging
+import logging as log
 
 import aexpect
 
@@ -16,6 +16,11 @@ from virttest.libvirt_xml.devices.emulator import Emulator
 from virttest.libvirt_xml.devices.console import Console
 from virttest.libvirt_xml.devices.filesystem import Filesystem
 from virttest.utils_test import libvirt as utlv
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -199,7 +204,7 @@ def run(test, params, env):
         check_state('shut off')
 
         # Undefine
-        result = virsh.undefine(vm_name, **virsh_args)
+        result = virsh.undefine(vm_name, options='--nvram', **virsh_args)
         utlv.check_exit_status(result)
         if not virsh.domain_exists(vm_name, **virsh_args):
             logging.info("Undefine LXC domain successfully")

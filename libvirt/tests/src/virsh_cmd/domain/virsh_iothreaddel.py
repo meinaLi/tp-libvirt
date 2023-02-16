@@ -1,10 +1,15 @@
-import logging
+import logging as log
 
 from avocado.core import exceptions
 
 from virttest import virsh
 from virttest.libvirt_xml import vm_xml
 from virttest.utils_test import libvirt
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def get_xmlinfo(vm_name, options):
@@ -66,7 +71,7 @@ def run(test, params, env):
         # Set iothreads first
         if iothreadids:
             ids_xml = vm_xml.VMIothreadidsXML()
-            ids_xml.iothread = iothreadids.split()
+            ids_xml.iothread = [{'id': id} for id in iothreadids.split()]
             vmxml.iothreadids = ids_xml
         if iothreadpins:
             cputune_xml = vm_xml.VMCPUTuneXML()

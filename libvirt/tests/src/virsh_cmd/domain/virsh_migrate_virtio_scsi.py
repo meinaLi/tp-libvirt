@@ -1,5 +1,5 @@
 import os
-import logging
+import logging as log
 import threading
 import time
 
@@ -15,6 +15,11 @@ from virttest import remote
 from virttest import ssh_key
 from virttest import migration
 from virttest.utils_test import libvirt as utlv
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -298,7 +303,7 @@ def run(test, params, env):
         # Cleanup created vm anyway
         if vm.is_alive():
             vm.destroy(gracefully=False)
-        virsh.undefine(new_vm_name)
+        virsh.undefine(new_vm_name, options='--nvram')
 
         # Cleanup iscsi device for block if it is necessary
         if source_type == "block":

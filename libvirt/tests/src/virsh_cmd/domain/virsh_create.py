@@ -1,4 +1,4 @@
-import logging
+import logging as log
 import aexpect
 
 from avocado.utils import process
@@ -6,6 +6,11 @@ from virttest import utils_test
 from virttest import virsh
 from virttest import utils_misc
 from virttest.libvirt_xml import vm_xml
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -55,7 +60,8 @@ def run(test, params, env):
         xmlfile = vm.backup_xml()
         if not options or "--validate" in options:
             xml_backup = vm_xml.VMXML.new_from_inactive_dumpxml(vm_name)
-            vm.undefine()
+            virsh.undefine(vm_name, options='--nvram')
+
             if "new_name" in params:
                 # Take existing VM XML and change a name there to one from config file
                 new_name = params.get("new_name")
@@ -64,7 +70,7 @@ def run(test, params, env):
             else:
                 xmlfile = xmlfile_with_extra_attibute(xml_backup)
         else:
-            vm.undefine()
+            virsh.undefine(vm_name, options='--nvram')
 
     else:
         xmlfile = params.get("create_domain_xmlfile")

@@ -1,12 +1,17 @@
 import os
 import time
-import logging
+import logging as log
 from avocado.core import exceptions
 from virttest import virsh
 from virttest import data_dir
 from virttest import utils_misc
 from virttest.libvirt_xml import vm_xml
 from virttest.utils_test import libvirt
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -188,7 +193,7 @@ def run(test, params, env):
             raise exceptions.TestSkipError("Can't pause the domain")
     elif pre_vm_state == "transient":
         logging.info("Creating %s...", vm_name)
-        vm.undefine()
+        virsh.undefine(vm_name, '--nvram', ignore_status=False)
         if virsh.create(backup_xml.xml, **virsh_dargs).exit_status:
             backup_xml.define()
             raise exceptions.TestSkipError("Can't create the domain")

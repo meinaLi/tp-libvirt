@@ -1,5 +1,5 @@
 import os
-import logging
+import logging as log
 import re
 import aexpect
 import time
@@ -16,6 +16,11 @@ from virttest import utils_config
 from virttest.libvirt_xml import vm_xml
 from virttest.utils_test import libvirt
 from virttest.staging import service
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -110,7 +115,7 @@ def run(test, params, env):
         check whether the guests has been shut down concurrently
         on host shutdown.
         """
-        pattern = r".+ libvirt-guests.sh.*: Starting shutdown on guest: .+"
+        pattern = r".+ libvirt-guests.sh.*: .*tarting shutdown on guest: .+"
         shut_start_line_nums = []
         for line_num, line in enumerate(output.splitlines()):
             if re.search(pattern, line):
@@ -118,7 +123,7 @@ def run(test, params, env):
         logging.debug("the line_numbers contains shutdown messages is: %s ",
                       shut_start_line_nums)
 
-        pattern = r".+ libvirt-guests.sh.*: Shutdown of guest.+complete"
+        pattern = r".+ libvirt-guests.sh.*: .*hutdown of guest.+complete"
         for line_num, line in enumerate(output.splitlines()):
             if re.search(pattern, line):
                 shut_complete_first_line = line_num
@@ -127,6 +132,10 @@ def run(test, params, env):
                       shut_complete_first_line)
 
         para_shut = int(parallel_shutdown)
+        logging.debug('shut_start_line_nums: %s', shut_start_line_nums)
+        if len(shut_start_line_nums) <= para_shut:
+            test.error('Did not get expected output. What we have is: %s' %
+                       shut_start_line_nums)
         if shut_start_line_nums[para_shut-1] > shut_complete_first_line:
             test.fail("Since parallel_shutdown is setting to non_zero, "
                       "%s guests should be shutdown concurrently."
@@ -146,7 +155,7 @@ def run(test, params, env):
             if status_error == "no":
                 if on_shutdown == "shutdown":
                     expect_msg[dom.name] = ("libvirt-guests.sh.*: "
-                                            "Shutdown of guest %s "
+                                            ".*hutdown of guest %s "
                                             "complete" % dom.name)
                 else:
                     expect_msg[dom.name] = ("libvirt-guests.sh.*: "
@@ -156,7 +165,7 @@ def run(test, params, env):
                 # Now the negative tests are only about ON_SHUTDOWN=shutdown.
                 if on_shutdown == "shutdown":
                     expect_msg[dom.name] = ("libvirt-guests.sh.*: "
-                                            "Shutdown of guest %s "
+                                            ".*hutdown of guest %s "
                                             "failed to complete in "
                                             "time" % dom.name)
         return expect_msg
@@ -247,6 +256,13 @@ def run(test, params, env):
     status_error = params.get("status_error")
     shutdown_timeout = params.get("shutdown_timeout", "300")
 
+    # Create libvirt guest config file if not existed
+    libvirt_guests_file = "/etc/sysconfig/libvirt-guests"
+    libvirt_guests_file_create = False
+    if not os.path.exists(libvirt_guests_file):
+        process.run("touch %s" % libvirt_guests_file, verbose=True)
+        libvirt_guests_file_create = True
+
     config = utils_config.LibvirtGuestsConfig()
     libvirt_guests_service = service.Factory.create_service("libvirt-guests")
     if not libvirt_guests_service.status():
@@ -304,7 +320,7 @@ def run(test, params, env):
         # host shutdown. The purpose can also be fulfilled by restart the
         # libvirt-guests service.
         libvirt_guests_service.restart()
-        time.sleep(10)
+        time.sleep(30)
         output = tail_messages.get_output()
         logging.debug("Get messages in /var/log/messages: %s" % output)
 
@@ -325,7 +341,10 @@ def run(test, params, env):
         for dom in vms[1:]:
             if dom.is_alive():
                 dom.destroy(gracefully=False)
-            virsh.remove_domain(dom.name, "--remove-all-storage")
+            virsh.remove_domain(dom.name, "--remove-all-storage --nvram")
+
+        if libvirt_guests_file_create:
+            os.remove(libvirt_guests_file)
 
         if nfs_vol:
             cleanup_nfs_backend_guest(vmxml_backup)

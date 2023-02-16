@@ -1,4 +1,6 @@
-import logging
+import logging as log
+
+from avocado.utils import process
 
 from virttest import libvirt_vm
 from virttest import migration
@@ -6,6 +8,7 @@ from virttest import remote as remote_old
 from virttest import virsh
 from virttest import libvirt_remote
 from virttest import libvirt_version
+from virttest import utils_net
 
 from virttest.libvirt_xml import vm_xml
 from virttest.utils_test import libvirt
@@ -13,6 +16,11 @@ from virttest.utils_libvirt import libvirt_config
 from virttest.utils_libvirt import libvirt_disk
 
 from provider.migration import migration_base
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def get_used_port(func_returns):
@@ -111,6 +119,51 @@ def recover_config_file(conf_obj, params):
                                      config_object=conf_obj)
 
 
+def setup_loop_dev(block_device, remote_params=None):
+    """
+    Setup a loop device  for test
+
+    :param block_device: block device name
+    :param remote_params: Dict of parameters, which should include:
+                          server_ip, server_user, server_pwd
+    """
+    loop_dev = None
+    # Find a free loop device
+    cmd = "losetup --find"
+    if remote_params:
+        loop_dev = remote_old.run_remote_cmd(cmd, remote_params, ignore_status=False).stdout_text.strip()
+    else:
+        loop_dev = process.run(cmd, shell=True).stdout_text.strip()
+    logging.debug("loop dev: %s", loop_dev)
+    # Setup a loop device
+    cmd = 'losetup %s %s' % (loop_dev, block_device)
+    if remote_params:
+        remote_old.run_remote_cmd(cmd, remote_params, ignore_status=False)
+    else:
+        process.run(cmd, shell=True)
+    return loop_dev
+
+
+def prepare_block_device(params, vm_name):
+    """
+    Prepare block_device for test
+
+    :param params: dict, parameters used
+    :param vm_name: vm name
+    """
+    target_dev = params.get("target_dev")
+    block_device = params.get("nfs_mount_dir") + '/' + params.get("block_device_name")
+    libvirt.create_local_disk("file", block_device, '1', "qcow2")
+
+    source_loop_dev = setup_loop_dev(block_device)
+    target_loop_dev = setup_loop_dev(block_device, remote_params=params)
+
+    # Attach block device to guest
+    result = virsh.attach_disk(vm_name, source_loop_dev, target_dev, debug=True)
+    libvirt.check_exit_status(result)
+    return (source_loop_dev, target_loop_dev)
+
+
 def run(test, params, env):
     """
     Run the test
@@ -165,10 +218,16 @@ def run(test, params, env):
     qemu_conf_list = eval(params.get("qemu_conf_list", "[]"))
     qemu_conf_path = params.get("qemu_conf_path")
     min_port = params.get("min_port")
+    status_error = "yes" == params.get("status_error", "no")
+    set_migration_host = "yes" == params.get("set_migration_host", "no")
+    src_hosts_dict = eval(params.get("src_hosts_conf", "{}"))
+    exec_statistics_cmd = "yes" == params.get("exec_statistics_cmd", "no")
 
     vm_session = None
     qemu_conf_remote = None
     (remove_key_local, remove_key_remote) = (None, None)
+    source_loop_dev = None
+    target_loop_dev = None
 
     # For safety reasons, we'd better back up  xmlfile.
     new_xml = vm_xml.VMXML.new_from_inactive_dumpxml(vm_name)
@@ -182,13 +241,26 @@ def run(test, params, env):
         if migrate_tls_force_default:
             value_list = ["migrate_tls_force"]
             # Setup migrate_tls_force default value on remote
-            server_params['file_path'] = "/etc/libvirt/qemu.conf"
+            server_params['file_path'] = qemu_conf_path
             remove_key_remote = libvirt_config.remove_key_in_conf(value_list,
                                                                   "qemu",
                                                                   remote_params=server_params)
             # Setup migrate_tls_force default value on local
             remove_key_local = libvirt_config.remove_key_in_conf(value_list,
                                                                  "qemu")
+
+        if set_migration_host:
+            value_list = ["migration_host"]
+            server_params['file_path'] = qemu_conf_path
+            remove_key_remote = libvirt_config.remove_key_in_conf(value_list,
+                                                                  "qemu",
+                                                                  remote_params=server_params)
+            # backup /etc/hosts
+            backup_hosts = "cp -f /etc/hosts /etc/hosts.bak"
+            process.run(backup_hosts, shell=True)
+            remote_old.run_remote_cmd(backup_hosts, params, ignore_status=False)
+            if not utils_net.map_hostname_ipaddress(src_hosts_dict):
+                test.error("Failed to set /etc/hosts on source host.")
 
         if check_port:
             server_params['file_path'] = qemu_conf_path
@@ -199,7 +271,7 @@ def run(test, params, env):
         # Update only remote qemu conf
         if qemu_conf_dest:
             qemu_conf_remote = libvirt_remote.update_remote_file(
-                server_params, qemu_conf_dest, "/etc/libvirt/qemu.conf")
+                server_params, qemu_conf_dest, qemu_conf_path)
         # Update local or both sides configuration files
         local_both_conf_obj = update_local_or_both_conf_file(params)
         # Setup TLS
@@ -228,6 +300,10 @@ def run(test, params, env):
                       vm_xml.VMXML.new_from_dumpxml(vm_name))
 
         vm_session = vm.wait_for_login()
+        if exec_statistics_cmd:
+            (source_loop_dev, target_loop_dev) = prepare_block_device(params, vm_name)
+            logging.debug("Guest xml with block device:\n%s",
+                          vm_xml.VMXML.new_from_dumpxml(vm_name))
         if action_during_mig:
             if poweroff_src_vm:
                 params.update({'vm_session': vm_session})
@@ -242,10 +318,10 @@ def run(test, params, env):
                                                  int(migrate_speed),
                                                  mode)
         # Execute migration process
-        migration_base.do_migration(vm, migration_test, None, dest_uri,
-                                    options, virsh_options, extra,
-                                    action_during_mig,
-                                    extra_args)
+        do_mig_param = {"vm": vm, "mig_test": migration_test, "src_uri": None, "dest_uri": dest_uri,
+                        "options": options, "virsh_options": virsh_options, "extra": extra,
+                        "action_during_mig": action_during_mig, "extra_args": extra_args}
+        migration_base.do_migration(do_mig_param)
 
         func_returns = dict(migration_test.func_ret)
         migration_test.func_ret.clear()
@@ -262,7 +338,10 @@ def run(test, params, env):
                                        bk_uri, dest_uri, test)
 
         if migrate_again:
+            if not status_error:
+                virsh.destroy(vm_name, uri=dest_uri, debug=True, ignore_status=True)
             if not vm.is_alive():
+                vm.connect_uri = bk_uri
                 vm.start()
             vm_session = vm.wait_for_login()
             action_during_mig = migration_base.parse_funcs(params.get('action_during_mig_again'),
@@ -284,10 +363,10 @@ def run(test, params, env):
                                                      int(migrate_speed_again),
                                                      mode)
 
-            migration_base.do_migration(vm, migration_test, None, dest_uri,
-                                        options, virsh_options,
-                                        extra, action_during_mig,
-                                        extra_args)
+            do_mig_param = {"vm": vm, "mig_test": migration_test, "src_uri": None, "dest_uri": dest_uri,
+                            "options": options, "virsh_options": virsh_options, "extra": extra,
+                            "action_during_mig": action_during_mig, "extra_args": extra_args}
+            migration_base.do_migration(do_mig_param)
             if return_port:
                 func_returns = dict(migration_test.func_ret)
                 logging.debug("Migration returns function "
@@ -301,20 +380,28 @@ def run(test, params, env):
                     logging.debug("Same port '%s' was used as "
                                   "expected", port_second)
         if int(migration_test.ret.exit_status) == 0:
-            migration_test.post_migration_check([vm], params, uri=dest_uri)
+            migration_test.post_migration_check([vm], params, dest_uri=dest_uri)
     finally:
         logging.info("Recover test environment")
         vm.connect_uri = bk_uri
         if vm_session:
             vm_session.close()
+        if exec_statistics_cmd:
+            process.run('losetup -d %s' % source_loop_dev, shell=True)
+            remote_old.run_remote_cmd('losetup -d %s' % target_loop_dev, params, ignore_status=False)
+
         # Clean VM on destination and source
         migration_test.cleanup_vm(vm, dest_uri)
         # Restore remote qemu conf and restart libvirtd
         if qemu_conf_remote:
             logging.debug("Recover remote qemu configurations")
             del qemu_conf_remote
+        # Restore /etc/hosts
+        if set_migration_host:
+            restore_hosts = "mv -f /etc/hosts.bak /etc/hosts"
+            process.run(restore_hosts, shell=True)
+            remote_old.run_remote_cmd(restore_hosts, params, ignore_status=False)
         # Restore local or both sides conf and restart libvirtd
-
         recover_config_file(local_both_conf_obj, params)
         if remove_key_remote:
             del remove_key_remote

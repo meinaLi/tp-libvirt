@@ -1,7 +1,6 @@
 import os
 import re
-import logging
-import platform
+import logging as log
 import time
 
 from avocado.utils import cpu as cpu_util
@@ -16,6 +15,11 @@ from virttest.utils_test import libvirt
 from virttest.libvirt_xml.vm_xml import VMXML
 
 vm_uptime_init = 0
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -294,10 +298,6 @@ def run(test, params, env):
 
         vmxml.set_vm_vcpus(vm_name, vcpu_max_num, vcpu_current_num,
                            topology_correction=topology_correction)
-        # Do not apply S3/S4 on power
-        cpu_arch = platform.machine()
-        if cpu_arch in ('x86_64', 'i386', 'i686'):
-            vmxml.set_pm_suspend(vm_name, "yes", "yes")
         vm.start()
         vm_uptime_init = vm.uptime()
         if with_stress:

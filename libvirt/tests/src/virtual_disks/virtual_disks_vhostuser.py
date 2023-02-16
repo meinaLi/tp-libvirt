@@ -1,4 +1,4 @@
-import logging
+import logging as log
 import os
 
 from avocado.utils import process
@@ -12,6 +12,11 @@ from virttest.utils_libvirt import libvirt_disk
 from virttest.libvirt_xml import vm_xml
 
 from virttest import libvirt_version
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def create_backend_image_file(image_path):
@@ -67,7 +72,16 @@ def create_vhostuser_disk(params):
         device_target, device_bus,
         device_format, disk_src_dict, None)
     vhostuser_disk.snapshot = "no"
+    device_model = params.get("model")
+    if device_model:
+        vhostuser_disk.model = device_model
     driver_dict = {"name": "qemu", "type": device_format, "queues": int(queues)}
+    packed = params.get('packed')
+    ats = params.get('ats')
+    if packed:
+        driver_dict.update({'packed': packed})
+    if ats:
+        driver_dict.update({'ats': ats})
     vhostuser_disk.driver = driver_dict
     return vhostuser_disk
 

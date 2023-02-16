@@ -1,10 +1,15 @@
-import logging
+import logging as log
 import os
 import uuid
 
 import aexpect
 
 from virttest import virsh
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -138,7 +143,7 @@ def run(test, params, env):
     # Prepare transient/persistent vm
     original_xml = vm.backup_xml()
     if persistent_vm == "no" and vm.is_persistent():
-        vm.undefine()
+        virsh.undefine(vm.name, options='--nvram')
     elif persistent_vm == "yes" and not vm.is_persistent():
         vm.define(original_xml)
     try:

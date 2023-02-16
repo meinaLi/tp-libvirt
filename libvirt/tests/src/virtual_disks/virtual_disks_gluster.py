@@ -1,5 +1,5 @@
 import os
-import logging
+import logging as log
 
 from avocado.utils import process
 
@@ -13,6 +13,11 @@ from virttest.libvirt_xml import vm_xml
 from virttest.libvirt_xml.devices.disk import Disk
 
 from virttest import libvirt_version
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -197,11 +202,6 @@ def run(test, params, env):
                 # 'iothreads' may not invalid number in negative tests
                 logging.debug("Can't convert '%s' to integer type",
                               dom_iothreads)
-        if default_pool:
-            disks_dev = vmxml.get_devices(device_type="disk")
-            for disk in disks_dev:
-                vmxml.del_device(disk)
-            vmxml.sync()
 
         # If hot plug, start VM first, otherwise stop VM if running.
         if start_vm:
@@ -228,7 +228,7 @@ def run(test, params, env):
         elif pre_vm_state == "transient":
             logging.info("Creating %s...", vm_name)
             vmxml_for_test = vm_xml.VMXML.new_from_inactive_dumpxml(vm_name)
-            vm.undefine()
+            virsh.undefine(vm_name, '--nvram', ignore_status=False)
             if virsh.create(vmxml_for_test.xml, **virsh_dargs).exit_status:
                 vmxml_backup.define()
                 test.skip("can't create the domain")

@@ -1,4 +1,4 @@
-import logging
+import logging as log
 import os
 
 from virttest import virsh
@@ -7,6 +7,11 @@ from virttest import libvirt_version
 from virttest import data_dir
 from virttest.libvirt_xml import vm_xml
 from virttest.utils_test import libvirt
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def check_in_vm(test, vm, **kwargs):
@@ -77,10 +82,12 @@ def run(test, params, env):
         # Specify boot loader for OVMF
         if boot_type == "ovmf":
             os_xml = vmxml.os
-            os_xml.loader_type = loader_type
-            os_xml.loader = loader
-            os_xml.loader_readonly = "yes"
-            vmxml.os = os_xml
+            if not libvirt_version.version_compare(8, 5, 0):
+                os_xml = vmxml.os
+                os_xml.loader_type = loader_type
+                os_xml.loader = loader
+                os_xml.loader_readonly = "yes"
+                vmxml.os = os_xml
 
         # Set attributes of fwcfg sysinfo in VMSysinfoXML
         if sysinfo_type == "fwcfg":

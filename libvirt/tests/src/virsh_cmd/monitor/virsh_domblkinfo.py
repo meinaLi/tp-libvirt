@@ -3,7 +3,9 @@ import re
 
 from avocado.utils import process
 from virttest import virsh
+from virttest import utils_misc
 from virttest.libvirt_xml import vm_xml
+from virttest.utils_test import libvirt
 
 from virttest import libvirt_version
 
@@ -35,7 +37,9 @@ def run(test, params, env):
             with open(disk_source, 'wb') as source_file:
                 source_file.seek((512 * 1024 * 1024) - 1)
                 source_file.write(str(0).encode())
-            virsh.attach_disk(vm_name, disk_source, front_device, debug=True)
+            out = virsh.attach_disk(vm_name, disk_source, front_device, debug=True)
+            utils_misc.wait_for(lambda: (out.stdout ==
+                                "Disk attached successfully"), 10)
             vm_ref = vm_name
             if "--all" in extra:
                 disk_source = ""
@@ -97,7 +101,7 @@ def run(test, params, env):
     front_dev = params.get("domblkinfo_front_dev", "vdd")
     extra = params.get("domblkinfo_extra", "")
     status_error = params.get("status_error", "no")
-    test_attach_disk = os.path.join(test.virtdir, "tmp.img")
+    test_attach_disk = os.path.join("/var/lib/libvirt/images", "tmp.img")
 
     domid = vm.get_id()
     domuuid = vm.get_uuid()
@@ -136,6 +140,14 @@ def run(test, params, env):
         (status_target, output_target,
          status_source, output_source) = attach_disk_test(test_disk_source, front_dev)
     else:
+        # Create separate disk other than system disk to check domain block information
+        # since system disk may be written into some data during execution
+        if status_error == "no" and params.get("start_vm", "no") == "yes" and "--human" not in extra:
+            test_attach_disk = os.path.join("/var/lib/libvirt/images", "attach.img")
+            libvirt.create_local_disk("file", test_attach_disk, 1, "qcow2")
+            test_disk_source = test_attach_disk
+            test_disk_target = front_dev
+            virsh.attach_disk(vm_name, test_disk_source, front_dev, ignore_status=False, debug=True)
         result_source = virsh.domblkinfo(vm_ref, test_disk_source,
                                          ignore_status=True, debug=True)
         status_source = result_source.exit_status

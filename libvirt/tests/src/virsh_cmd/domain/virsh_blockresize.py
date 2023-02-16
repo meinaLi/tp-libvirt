@@ -1,6 +1,7 @@
+import math
 import os
 import re
-import logging
+import logging as log
 
 from avocado.utils import process
 
@@ -12,6 +13,11 @@ from virttest import libvirt_version
 
 
 OVER_SIZE = (1 << 64)
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -137,6 +143,9 @@ def run(test, params, env):
             value_return_by_qemu_img = re.search(r'virtual size:\s+(\d+(\.\d+)?)+\s?G', output).group(1)
             if value != int(float(value_return_by_qemu_img)):
                 test.fail("initial image size in config is not equals to value returned by qemu-img info")
+        elif resize_value[-1] == "B":
+            value = int(resize_value[:-1]) / 1000
+            expected_size = math.ceil(value) * 1024
         else:
             test.error("Unknown scale value")
 

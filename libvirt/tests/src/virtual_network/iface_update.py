@@ -1,8 +1,9 @@
 import os
 import re
-import logging
+import logging as log
 import time
 
+from xml.etree import ElementTree
 from avocado.utils import process
 from avocado.utils.software_manager.backends import rpm
 
@@ -11,7 +12,14 @@ from virttest import utils_net
 from virttest import utils_libvirtd
 from virttest.libvirt_xml import network_xml
 from virttest.libvirt_xml import vm_xml
+from virttest.libvirt_xml.devices.interface import Interface
+from virttest.utils_libvirt import libvirt_virtio
 from virttest.utils_test import libvirt
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def check_iface_link(session, mac, stat):
@@ -38,6 +46,69 @@ def check_iface_link(session, mac, stat):
         return False
 
 
+def check_iface_portgroup(iface_inst, test, params):
+    """
+    Check iface portgroup attributes
+
+    :param iface_inst: iface instance to be checked
+    :param test:  test instance
+    :param params: test params
+    """
+    logging.debug('Attibute dict of Iface to be checked: %s',
+                  iface_inst.fetch_attrs())
+    net_pgs = eval(params['net_attr_portgroups'])
+    logging.debug('Network portgroups configurations dict: %s', net_pgs)
+    cur_pg = net_pgs[0] if net_pgs[0]['name'] == 'engineering' \
+        else net_pgs[1]
+    iface_bw = iface_inst.fetch_attrs()['bandwidth']
+
+    if iface_bw['outbound'] != cur_pg['bandwidth_outbound'] \
+            or iface_bw['inbound'] != cur_pg['bandwidth_inbound']:
+        test.fail('Bandwidth of iface(%s) is incorrect. '
+                  'Should be %s' % (iface_bw, cur_pg))
+
+
+def update_vm_boot_order(vm_name, disk_boot):
+    """
+    Update boot order of vm before test
+
+    :param vm_name: vm name
+    :param disk_boot: boot order of disk
+    """
+    vmxml = vm_xml.VMXML.new_from_dumpxml(vm_name)
+    # Remove os boot config to avoid conflict with boot setting of disk device
+    vm_os = vmxml.os
+    vm_os.del_boots()
+    vmxml.os = vm_os
+    disk = vmxml.get_devices('disk')[0]
+    target_dev = disk.target.get('dev', '')
+    logging.debug('Will set boot order %s to device %s',
+                  disk_boot, target_dev)
+    vmxml.set_boot_order_by_target_dev(target_dev, disk_boot)
+    vmxml.sync()
+
+
+def check_boot_order(vm, test, params):
+    """
+    Check vm and iface after updating boot order
+
+    :param vm: test vm
+    :param test: test instance
+    :param params: test params
+    """
+    if params.get('cold_update') != 'yes' and vm.is_dead():
+        test.fail('VM should be alive after live update.')
+    vmxml = vm_xml.VMXML.new_from_dumpxml(vm.name)
+    iface = vmxml.get_devices('interface')[0]
+    status_error = 'yes' == params.get('status_error', 'no')
+    if (iface.boot != params.get('new_iface_boot')) ^ status_error:
+        test.fail('Boot order update does not meet expectation. '
+                  'Update should %s.\n'
+                  'Detail: iface.boot = %s new_iface_boot = %s' %
+                  ('fail' if status_error else 'succeed',
+                   iface.boot, params.get('new_iface_boot')))
+
+
 def run(test, params, env):
     """
     Test interface devices update
@@ -48,44 +119,37 @@ def run(test, params, env):
     new_network_name = params.get("net_name")
     expect_error = "yes" == params.get("status_error", "no")
     expect_err_msg = params.get("expect_err_msg")
+    case = params.get('case', '')
 
-    iface_driver = params.get("iface_driver")
-    iface_driver_host = params.get("iface_driver_host")
-    iface_driver_guest = params.get("iface_driver_guest")
-    iface_model = params.get("iface_model")
+    for key, value in params.items():
+        if key.startswith('iface_') or key.startswith('new_iface_'):
+            expr = '{key} = """{val}"""'.format(key=key, val=value)
+            logging.debug('Executing %s', expr)
+            exec(expr)
+        if key.startswith('del_'):
+            expr = '{key} = "yes" == params.get("{key}")'.format(key=key)
+            logging.debug('Executing %s', expr)
+            exec(expr)
+
     iface_mtu = params.get("iface_mtu")
     iface_rom = params.get("iface_rom")
-    iface_filter = params.get("iface_filter")
-    iface_boot = params.get('iface_boot')
-    iface_coalesce = params.get('iface_coalesce')
-    iface_source = params.get('iface_source')
 
-    new_iface_driver = params.get("new_iface_driver")
-    new_iface_driver_host = params.get("new_iface_driver_host")
-    new_iface_driver_guest = params.get("new_iface_driver_guest")
-    new_iface_model = params.get("new_iface_model")
-    new_iface_rom = params.get("new_iface_rom")
     new_iface_inbound = params.get("new_iface_inbound")
-    new_iface_outbound = params.get("new_iface_outbound")
     new_iface_link = params.get("new_iface_link")
     new_iface_source = params.get("new_iface_source")
-    new_iface_target = params.get("new_iface_target")
-    new_iface_addr = params.get("new_iface_addr")
     new_iface_filter = params.get("new_iface_filter")
-    new_iface_mtu = params.get("new_iface_mtu")
-    new_iface_type = params.get("new_iface_type")
-    create_new_net = "yes" == params.get("create_new_net")
-    new_iface_alias = params.get("new_iface_alias")
     new_iface_coalesce = params.get('new_iface_coalesce')
-    cold_update = "yes" == params.get("cold_update", "no")
-    del_addr = "yes" == params.get("del_address")
-    del_rom = "yes" == params.get("del_rom")
-    del_filter = "yes" == params.get("del_filter")
-    check_libvirtd = "yes" == params.get("check_libvirtd")
+    new_iface_boot = params.get('new_iface_boot')
+    new_iface_alias = params.get("new_iface_alias")
     new_iface_filter_parameters = eval(params.get("new_iface_filter_parameters", "{}"))
-    rules = eval(params.get("rules", "{}"))
-    del_mac = "yes" == params.get("del_mac", "no")
+
+    del_filter = "yes" == params.get("del_filter")
     del_coalesce = 'yes' == params.get('del_coalesce', 'no')
+
+    create_new_net = "yes" == params.get("create_new_net")
+    cold_update = "yes" == params.get("cold_update", "no")
+    check_libvirtd = "yes" == params.get("check_libvirtd")
+    rules = eval(params.get("rules", "{}"))
     direct_net = 'yes' == params.get('direct_net', 'no')
     direct_mode = params.get("direct_mode", "bridge")
 
@@ -117,6 +181,13 @@ def run(test, params, env):
             if del_net_bandwidth:
                 netxml.del_element('/bandwidth')
                 netxml.sync()
+            if case == 'update_portgroup':
+                net_dict = {k[9:]: eval(
+                    params[k]) for k in params
+                    if k.startswith('net_attr_')}
+                logging.debug('New net attributes: %s', net_dict)
+                netxml.setup_attrs(**net_dict)
+                netxml.sync()
             logging.debug('Network xml after prepare:\n%s', netxml)
 
         # According to the different os find different file for rom
@@ -142,40 +213,35 @@ def run(test, params, env):
             "filter", 'boot', 'coalesce', 'source'
         ]
         for update_item_bef in update_list_bef:
-            if names['iface_'+update_item_bef]:
+            if names.get('iface_'+update_item_bef):
                 iface_dict_bef.update({update_item_bef: names['iface_'+update_item_bef]})
 
         update_list_aft = [
             "driver", "driver_host", "driver_guest", "model", "rom", "inbound",
-            "outbound", "link", "source", "target", "addr", "filter", "mtu", "type",
-            "alias", "filter_parameters", "coalesce"
+            "outbound", "link", "source", "target", "addr", "filter", "mtu",
+            "type", "alias", "filter_parameters", "coalesce", "boot",
         ]
         for update_item_aft in update_list_aft:
-            if names["new_iface_"+update_item_aft]:
+            if names.get("new_iface_"+update_item_aft):
                 iface_dict_aft.update({update_item_aft: names["new_iface_"+update_item_aft]})
+
+        del_list = ["del_addr", "del_rom", "del_filter", "del_mac",
+                    "del_coalesce", "del_bandwidth"]
+        for del_item in del_list:
+            if names.get(del_item):
+                iface_dict_aft.update({del_item: names[del_item]})
+
         logging.info("iface_dict_bef is %s, iface_dict_aft is %s",
                      iface_dict_bef, iface_dict_aft)
 
-        del_list = ["del_addr", "del_rom", "del_filter", "del_mac", "del_coalesce"]
-        for del_item in del_list:
-            if names[del_item]:
-                iface_dict_aft.update({del_item: names[del_item]})
-
         # Operations before updating vm's iface xml
-        if iface_boot:
-            disk_boot = params.get('disk_book', 1)
-            vmxml = vm_xml.VMXML.new_from_dumpxml(vm_name)
-            # Remove os boot config
-            vm_os = vmxml.os
-            vm_os.del_boots()
-            vmxml.os = vm_os
-            # Add boot config to disk
-            disk = vmxml.get_devices('disk')[0]
-            target_dev = disk.target.get('dev', '')
-            logging.debug('Will set boot order %s to device %s',
-                          disk_boot, target_dev)
-            vmxml.set_boot_order_by_target_dev(target_dev, disk_boot)
-            vmxml.sync()
+        disk_boot = params.get('disk_boot')
+        if disk_boot:
+            update_vm_boot_order(vm_name, disk_boot)
+
+        if case == 'update_driver_iommu_ast':
+            iommu_attrs = eval(params.get('iommu_attrs', '{}'))
+            libvirt_virtio.add_iommu_dev(vm, iommu_attrs)
 
         # Update vm interface with items in iface_dict_bef and start it
         if iface_dict_bef:
@@ -235,6 +301,9 @@ def run(test, params, env):
                             test.fail("Get value is not equal to expect")
             vmxml_aft = vm_xml.VMXML.new_from_dumpxml(vm_name)
             iface_aft = list(vmxml_aft.get_iface_all().values())[0]
+            iface_inst = Interface()
+            iface_inst.xml = ElementTree.tostring(iface_aft, encoding='unicode')
+            logging.debug('Interface after update:\n%s', iface_inst)
             if new_iface_link:
                 iface_link_value = iface_aft.find('link').get('state')
                 if iface_link_value == new_iface_link:
@@ -306,6 +375,10 @@ def run(test, params, env):
                     logging.info('coalesce delete check PASS.')
                 else:
                     test.fail('coalesce not deleted.')
+            if case == 'update_portgroup':
+                check_iface_portgroup(iface_inst, test, params)
+            if case == 'update_boot_order':
+                check_boot_order(vm, test, params)
 
     finally:
         vmxml_backup.sync()

@@ -1,6 +1,6 @@
 import os
 import re
-import logging
+import logging as log
 
 from virttest import virsh
 from virttest import data_dir
@@ -9,6 +9,11 @@ from virttest.libvirt_xml import vm_xml
 from virttest.libvirt_xml import capability_xml
 from virttest.libvirt_xml import domcapability_xml
 from virttest.libvirt_xml.xcepts import LibvirtXMLNotFoundError
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def get_domcapa_output(test):
@@ -37,8 +42,7 @@ def get_cpu_definition(source_type, vm_name, test):
         cpu_xml = dom_xml.xmltreefile.get_element_string('/cpu')
     elif source_type == "domcapa_xml":
         domcapa_xml = domcapability_xml.DomCapabilityXML()
-        cpu_tmp = vm_xml.VMCPUXML.from_domcapabilities(domcapa_xml)
-        cpu_xml = cpu_tmp.xmltreefile.get_element_string('/')
+        cpu_xml = str(vm_xml.VMCPUXML.from_domcapabilities(domcapa_xml))
     elif source_type == "capa_xml":
         capa_xml = capability_xml.CapabilityXML()
         cpu_xml = capa_xml.xmltreefile.get_element_string('/host/cpu')

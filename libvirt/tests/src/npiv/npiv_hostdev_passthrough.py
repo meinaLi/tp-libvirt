@@ -1,4 +1,4 @@
-import logging
+import logging as log
 import aexpect
 
 from avocado.utils import process
@@ -14,6 +14,11 @@ from virttest import utils_misc
 
 
 _TIMEOUT = 5
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -105,6 +110,8 @@ def run(test, params, env):
         if not online_hbas:
             test.cancel("NO ONLINE HBAs!")
         first_online_hba = online_hbas[0]
+        # enable multipath service
+        process.run("mpathconf --enable", shell=True)
         # create vhba based on the first online hba
         old_vhbas = utils_npiv.find_hbas("vhba")
         logging.debug("Original online vHBAs: %s", old_vhbas)
@@ -112,8 +119,6 @@ def run(test, params, env):
                 {"nodedev_parent": first_online_hba,
                  "scsi_wwnn": scsi_wwnn,
                  "scsi_wwpn": scsi_wwpn})
-        # enable multipath service
-        process.run("mpathconf --enable", shell=True)
         if not utils_misc.wait_for(lambda: utils_npiv.is_vhbas_added(old_vhbas),
                                    timeout=_TIMEOUT):
             test.fail("vhba not successfully created")

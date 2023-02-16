@@ -1,12 +1,18 @@
-import logging
-
-from virttest import virsh
-from virttest import utils_package
-from virttest.libvirt_xml import vm_xml
-from virttest.utils_test import libvirt as utlv
-from virttest.libvirt_xml import xcepts
+import logging as log
 
 from virttest import libvirt_version
+from virttest import utils_package
+from virttest import virsh
+
+from virttest.libvirt_xml import vm_xml
+from virttest.libvirt_xml import xcepts
+from virttest.utils_libvirt import libvirt_bios
+from virttest.utils_test import libvirt as utlv
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def unify_to_MiB(unit, size):
@@ -69,6 +75,7 @@ def run(test, params, env):
     try:
         # Specify boot loader for OVMF
         if boot_type == 'ovmf':
+            v_xml.os = libvirt_bios.remove_bootconfig_items_from_vmos(v_xml.os)
             os_xml = v_xml.os
             os_xml.loader_type = loader_type
             os_xml.loader = loader

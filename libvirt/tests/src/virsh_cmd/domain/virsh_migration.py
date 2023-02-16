@@ -1,4 +1,4 @@
-import logging
+import logging as log
 import platform
 
 from virttest import libvirt_vm
@@ -6,6 +6,11 @@ from virttest import virsh
 from virttest import migration
 from virttest.utils_test import libvirt
 from virttest import libvirt_xml
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def update_machinetype(test, vmxml, machine):
@@ -42,7 +47,7 @@ def cleanup_vm(vm_list, vmxml_dict, migration_obj, src_uri, dest_uri):
     for vm in vm_list:
         migration_obj.cleanup_dest_vm(vm, src_uri, dest_uri)
         if vm.exists() and vm.is_persistent():
-            vm.undefine()
+            vm.undefine(options='--nvram')
         if vm.is_alive():
             vm.destroy()
     for key in vmxml_dict.keys():
@@ -157,7 +162,7 @@ def run(test, params, env):
             if migrate_setup.RET_MIGRATION:
                 uptime = migrate_setup.post_migration_check(vm_list, params,
                                                             uptime,
-                                                            uri=dest_uri)
+                                                            dest_uri=dest_uri)
                 if migrate_back:
                     migrate_setup.migrate_pre_setup(src_uri, params)
                     logging.debug("Migrating back to source from %s to %s "

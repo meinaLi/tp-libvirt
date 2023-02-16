@@ -1,4 +1,5 @@
-import logging
+import logging as log
+import time
 import os
 
 from uuid import uuid1
@@ -12,6 +13,11 @@ from tempfile import mktemp
 
 # minimal supported hwtype
 HWTYPE = 11
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def find_devices_by_cap(test, cap_type):
@@ -81,6 +87,11 @@ def destroy_nodedev(dev_name):
     :param dev_name: name of mediated device
     """
     virsh.nodedev_destroy(dev_name, debug=True)
+    # Sleep a few seconds to allow device be released completely
+    # Here virsh nodedev-event(not virsh event) may help, but add additional complexity since
+    # it need separate thread to use virsh nodedev-event, otherwise main thread
+    # will be blocked
+    time.sleep(10)
 
 
 def check_device_was_destroyed(test):

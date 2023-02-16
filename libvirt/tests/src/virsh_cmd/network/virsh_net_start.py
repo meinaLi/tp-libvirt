@@ -1,4 +1,4 @@
-import logging
+import logging as log
 import time
 
 from virttest import virsh
@@ -9,6 +9,11 @@ from virttest import utils_split_daemons
 from virttest.libvirt_xml import network_xml, IPXML
 from virttest.staging import service
 from virttest.utils_test import libvirt
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -81,7 +86,7 @@ def run(test, params, env):
             range_4 = network_xml.RangeXML()
             range_4.attrs = {'start': '192.168.100.2', 'end': '192.168.100.254'}
             ipxml.dhcp_ranges = range_4
-            test_xml.ip = ipxml
+            test_xml.ips = [ipxml]
             test_xml.define()
             virsh.net_start("def")
             # start default, should fail

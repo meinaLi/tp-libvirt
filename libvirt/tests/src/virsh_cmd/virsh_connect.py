@@ -1,4 +1,4 @@
-import logging
+import logging as log
 import os
 import re
 import shutil
@@ -12,6 +12,11 @@ from virttest import virsh
 from virttest import utils_conn
 
 from virttest.utils_test import libvirt as utlv
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def check_virsh_connect_alive(test, params):
@@ -188,6 +193,8 @@ def run(test, params, env):
         elif transport == "tcp":
             tcp_connection = utils_conn.TCPConnection(server_ip=server_ip,
                                                       server_pwd=server_pwd,
+                                                      client_ip=client_ip,
+                                                      client_pwd=client_pwd,
                                                       tcp_port=tcp_port)
             tcp_connection.conn_setup()
 

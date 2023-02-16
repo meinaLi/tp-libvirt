@@ -1,4 +1,4 @@
-import logging
+import logging as log
 
 from virttest import libvirt_version
 from virttest import virsh
@@ -15,10 +15,54 @@ from provider.interface import check_points
 VIRSH_ARGS = {'debug': True, 'ignore_status': False}
 
 
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
+
+
 def run(test, params, env):
     """
     Test network connectivity
     """
+    def update_vm_disk_boot(vm_name, disk_boot):
+        """
+        Update boot order of vm's 1st disk before test
+
+        :param vm_name: vm name
+        :param disk_boot: boot order of disk
+        """
+        vmxml = vm_xml.VMXML.new_from_dumpxml(vm_name)
+        vm_os = vmxml.os
+        vm_os.del_boots()
+        vmxml.os = vm_os
+        disk = vmxml.get_devices('disk')[0]
+        target_dev = disk.target.get('dev', '')
+        logging.debug('Set boot order %s to device %s', disk_boot, target_dev)
+        vmxml.set_boot_order_by_target_dev(target_dev, disk_boot)
+        vmxml.sync()
+
+    def get_iface_pci_id(vm_session):
+        """
+        Get pci id of VM's interface
+
+        :param vm_session: VM session
+        :return: pci id of VM's interface
+        """
+        cmd = "lspci | awk '/Eth/ {print $1}'"
+        return vm_session.cmd_output(cmd).splitlines()[0]
+
+    def get_multiplier(vm_session, pci_id):
+        """
+        Get multiplier of VM's interface
+
+        :param vm_session: VM session
+        :param pci_id: The pci id
+        :return: The multiplier of VM's interface
+        """
+        cmd = "lspci -vvv -s %s | awk -F '=' '/multiplier=/ {print $NF}'" % pci_id
+        act_mul = vm_session.cmd_output(cmd).strip()
+        logging.debug("Actual multiplier: %s", act_mul)
+        return act_mul
 
     def setup_default():
         """
@@ -26,6 +70,14 @@ def run(test, params, env):
         """
         logging.debug("Remove VM's interface devices.")
         libvirt_vmxml.remove_vm_devices_by_type(vm, 'interface')
+        vm_attrs = eval(params.get('vm_attrs', '{}'))
+        if vm_attrs:
+            vmxml = vm_xml.VMXML.new_from_dumpxml(vm_name)
+            vmxml.setup_attrs(**vm_attrs)
+            vmxml.sync()
+        disk_boot = params.get('disk_boot')
+        if disk_boot:
+            update_vm_disk_boot(vm_name, disk_boot)
 
     def teardown_default():
         """
@@ -41,10 +93,14 @@ def run(test, params, env):
         test_env_obj = None
         if test_target == "simulator":
             test_env_obj = utils_vdpa.VDPASimulatorTest()
+            test_env_obj.setup()
         else:
+            vdpa_mgmt_tool_extra = params.get("vdpa_mgmt_tool_extra", "")
             pf_pci = utils_vdpa.get_vdpa_pci()
-            test_env_obj = utils_vdpa.VDPAOvsTest(pf_pci)
-        test_env_obj.setup()
+            test_env_obj = utils_vdpa.VDPAOvsTest(pf_pci, mgmt_tool_extra=vdpa_mgmt_tool_extra)
+            test_env_obj.setup()
+            params['mac_addr'] = test_env_obj.vdpa_mac.get(params.get("vdpa_dev", "vdpa0"))
+
         return test_env_obj
 
     def teardown_vdpa():
@@ -67,9 +123,14 @@ def run(test, params, env):
         """
         # Setup Iface device
         vmxml = vm_xml.VMXML.new_from_dumpxml(vm_name)
-        iface_dict = eval(params.get('iface_dict', '{}'))
+        iface_dict = interface_base.parse_iface_dict(params)
         iface_dev = interface_base.create_iface(dev_type, iface_dict)
         libvirt.add_vm_device(vmxml, iface_dev)
+        iface_dict2 = eval(params.get("iface_dict2", "{}"))
+        if iface_dict2:
+            libvirt_vmxml.modify_vm_device(
+                vm_xml.VMXML.new_from_dumpxml(vm_name),
+                "interface", iface_dict2, 2)
 
         logging.info("Start a VM with a '%s' type interface.", dev_type)
         vm.start()
@@ -80,6 +141,14 @@ def run(test, params, env):
                 test.fail("VM iface should be {}, but got {}."
                           .format(params.get('vm_iface_driver'),
                                   vm_iface_info.get('driver')))
+        check_points.comp_interface_xml(vm_xml.VMXML.new_from_dumpxml(vm_name),
+                                        iface_dict)
+        if expr_multiplier:
+            pci_id = get_iface_pci_id(vm_session)
+            act_multiplier = get_multiplier(vm_session, pci_id)
+            if expr_multiplier != act_multiplier:
+                test.fail("The multiplier should be {}, but got {}."
+                          .format(expr_multiplier, act_multiplier))
 
         logging.info("Check the network connectivity")
         check_points.check_network_accessibility(
@@ -92,7 +161,7 @@ def run(test, params, env):
     # Variable assignment
     test_target = params.get('test_target', '')
     dev_type = params.get('dev_type', '')
-
+    expr_multiplier = params.get("expr_multiplier")
     vm_name = params.get('main_vm')
     vm = env.get_vm(vm_name)
 

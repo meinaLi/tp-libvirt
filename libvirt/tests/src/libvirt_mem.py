@@ -2,7 +2,7 @@ import os
 import re
 import ast
 import uuid
-import logging
+import logging as log
 import platform
 import tempfile
 import time
@@ -30,6 +30,11 @@ from virttest.staging.utils_memory import drop_caches
 from virttest.staging.utils_memory import read_from_numastat
 
 from virttest import libvirt_version
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -375,14 +380,7 @@ def run(test, params, env):
             membacking.source = ''
             membacking.source_type = 'file'
             if huge_pages:
-                hugepages = vm_xml.VMHugepagesXML()
-                pagexml_list = []
-                for i in range(len(huge_pages)):
-                    pagexml = hugepages.PageXML()
-                    pagexml.update(huge_pages[i])
-                    pagexml_list.append(pagexml)
-                hugepages.pages = pagexml_list
-                membacking.hugepages = hugepages
+                membacking.setup_attrs(hugepages={'pages': huge_pages})
             vmxml.mb = membacking
 
         logging.debug("vm xml: %s", vmxml)

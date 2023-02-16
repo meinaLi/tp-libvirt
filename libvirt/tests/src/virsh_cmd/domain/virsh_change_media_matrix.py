@@ -1,10 +1,15 @@
 import os
 import time
-import logging
+import logging as log
 from virttest import virsh
 from virttest import data_dir
 from virttest.libvirt_xml import vm_xml
 from virttest.utils_test import libvirt
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -238,10 +243,11 @@ def run(test, params, env):
             time.sleep(5)
         elif pre_vm_state == "transient":
             logging.info("Creating %s..." % vm_name)
-            vm.undefine()
+            virsh.undefine(vm_name, '--nvram', ignore_status=False)
             if virsh.create(vmxml_for_test.xml, **virsh_dargs).exit_status:
                 vmxml_backup.define()
                 test.cancel("Can't create the domain")
+            vm.wait_for_login().close()
 
         # Libvirt will ignore --source when action is eject
         attach = True

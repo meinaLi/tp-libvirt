@@ -1,4 +1,4 @@
-import logging
+import logging as log
 
 from virttest import libvirt_version
 from virttest import libvirt_vm
@@ -14,6 +14,11 @@ from virttest.libvirt_xml import vm_xml
 from virttest.utils_test import libvirt
 from virttest.utils_libvirt import libvirt_network
 from virttest.libvirt_xml.devices import interface
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -95,10 +100,10 @@ def run(test, params, env):
         :param runner: Command runner
         :return: Updated network dict
         """
-        if net_dict.get("net_name", "") == "direct-macvtap":
+        if net_dict.get("name", "") == "direct-macvtap":
             logging.info("Updating network iface name")
             iface_name = utils_net.get_net_if(runner=runner, state="UP")[0]
-            net_dict.update({"forward_iface": iface_name})
+            net_dict.update({'forward_interface': [{'dev': iface_name}]})
         else:
             # TODO: support other types
             logging.info("No need to update net_dict. We only support to "

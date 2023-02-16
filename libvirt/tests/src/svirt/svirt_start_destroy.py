@@ -1,5 +1,5 @@
 import os
-import logging
+import logging as log
 import re
 
 from virttest import utils_selinux
@@ -12,6 +12,11 @@ from virttest import libvirt_version
 from virttest.libvirt_xml.vm_xml import VMXML
 
 from avocado.utils import process
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -266,7 +271,7 @@ def run(test, params, env):
             os.chown(path, int(label_list[0]), int(label_list[1]))
         backup_xml.sync()
         if xattr_check:
-            virsh.undefine(guest_name, ignore_status=True)
+            virsh.undefine(guest_name, options='--nvram', ignore_status=True)
         utils_selinux.set_status(backup_sestatus)
         if (security_driver or security_default_confined or
                 security_require_confined):

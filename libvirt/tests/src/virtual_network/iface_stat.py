@@ -1,12 +1,18 @@
 import datetime
-import logging
+import logging as log
 import re
 
+from virttest import utils_misc
 from virttest import utils_net
 from virttest import virsh
 
 from virttest.libvirt_xml import vm_xml
 from virttest.utils_test import libvirt
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def get_host_iface_stat(vm_name, iface):
@@ -89,7 +95,8 @@ def compare_iface_stat(vm_stat, host_stat, bar=0.2):
         if delta == 0:
             continue
         elif delta / max(vm_stat[key], host_stat[key]) > bar:
-            logging.error('Value of %s on host and vm are not close.', key)
+            logging.error('Value of %s on vm (%s) and host (%s) are not close.',
+                          key, vm_stat[key], host_stat[key])
             flag = False
     return flag
 
@@ -106,7 +113,9 @@ def run(test, params, env):
 
     try:
         if case == 'compare':
-            host_ifname = utils_net.get_net_if(state="UP")[0]
+            host_ifname = params.get("iface_name")
+            if not host_ifname:
+                host_ifname = utils_net.get_net_if(state="UP")[0]
             iface_dict = {k.replace('new_iface_', ''): v
                           for k, v in params.items() if k.startswith('new_iface_')}
             iface_dict['source'] = iface_dict['source'] % host_ifname
@@ -122,14 +131,18 @@ def run(test, params, env):
 
             session = vm.wait_for_serial_login(timeout=60)
             iface_in_vm = utils_net.get_linux_ifname(session, iface_mac)
-
-            session.cmd('ping www.redhat.com -4 -c 20')
-            host_iface_stat = get_host_iface_stat(vm_name, iface_target_dev)
-            vm_iface_stat = get_vm_iface_stat(session, iface_in_vm)
             session.close()
 
-            if not compare_iface_stat(vm_iface_stat, host_iface_stat, bar=0.2):
-                test.fail('Iface stat of host and vm should be close.')
+            def _collect_and_compare_stat():
+                session = vm.wait_for_serial_login(timeout=60)
+                session.cmd('ping www.redhat.com -4 -c 20')
+                host_iface_stat = get_host_iface_stat(vm_name, iface_target_dev)
+                vm_iface_stat = get_vm_iface_stat(session, iface_in_vm)
+                session.close()
+                return compare_iface_stat(vm_iface_stat, host_iface_stat,
+                                          bar=0.2)
 
+            if not utils_misc.wait_for(_collect_and_compare_stat, timeout=240):
+                test.fail('Iface stat of host and vm should be close.')
     finally:
         bk_xml.sync()

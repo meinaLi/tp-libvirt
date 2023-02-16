@@ -1,4 +1,4 @@
-import logging
+import logging as log
 
 from virttest import libvirt_xml
 from virttest import utils_misc
@@ -6,11 +6,18 @@ from virttest import utils_misc
 from virttest.utils_test import libvirt
 
 
-def prepare_vm(vm_name, test):
-    host_numa_node = utils_misc.NumaInfo()
-    node_list = host_numa_node.online_nodes_withmem
-    if len(node_list) < 2:
-        test.cancel("Not enough numa nodes available")
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
+
+
+def prepare_vm(vm_name, node_list):
+    """
+    Make necessary changes to guest xml
+
+    :param vm_name: the vm name
+    :param node_list: numa node list on the host
+    """
     vmxml = libvirt_xml.VMXML.new_from_dumpxml(vm_name)
     numa_memnode = [
         {'cellid': '0', 'mode': 'strict', 'nodeset': str(node_list[0])},
@@ -38,8 +45,14 @@ def run(test, params, env):
     vm_name = params.get("main_vm")
     backup_xml = libvirt_xml.VMXML.new_from_dumpxml(vm_name)
     replace_string = params.get("replace_string", '')
+
+    host_numa_node = utils_misc.NumaInfo()
+    node_list = host_numa_node.online_nodes_withmem
+    if len(node_list) < 2:
+        test.cancel("The host only has {} numa node, but 2 is "
+                    "required at least".format(len(node_list)))
     try:
-        prepare_vm(vm_name, test)
+        prepare_vm(vm_name, node_list)
         status = libvirt.exec_virsh_edit(vm_name, [replace_string])
         if status:
             test.fail(

@@ -1,5 +1,5 @@
-import logging
-import netaddr
+import logging as log
+import ipaddress
 import time
 
 from virttest import virsh, virt_vm
@@ -8,6 +8,11 @@ from virttest.libvirt_xml.vm_xml import VMXML
 from virttest.libvirt_xml.nodedev_xml import NodedevXML
 from virttest.test_setup import PciAssignable
 from virttest.utils_test import libvirt
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -181,7 +186,7 @@ def run(test, params, env):
                     logging.debug("Adapter passthroughed to guest successfully")
                 else:
                     test.fail("Passthrough adapter not found in guest.")
-                net_ip = netaddr.IPAddress(net_ip)
+                net_ip = ipaddress.ip_address(net_ip)
                 nic_list_after = vm.get_pci_devices()
                 nic_list = list(set(nic_list_after).difference(set(nic_list_before)))
                 for val in range(len(nic_list)):

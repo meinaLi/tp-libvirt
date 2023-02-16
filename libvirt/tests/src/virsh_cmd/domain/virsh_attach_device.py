@@ -4,11 +4,11 @@ Module to exercise virsh attach-device command with various devices/options
 
 import os
 import os.path
-import logging
-import aexpect
+import logging as log
+from string import ascii_lowercase
 import itertools
 import platform
-from string import ascii_lowercase
+import aexpect
 
 from six import iteritems
 
@@ -20,8 +20,15 @@ from virttest.libvirt_xml import xcepts
 from virttest.libvirt_xml.vm_xml import VMXML
 from virttest.utils_libvirt import libvirt_pcicontr
 
-
 # TODO: Move all these helper classes someplace else
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
+# Prepare a generator for assigning ports
+global port_number_sequence
+port_number_sequence = itertools.count(1)
 
 
 class TestParams(object):
@@ -417,11 +424,14 @@ class SerialFile(AttachDeviceBase):
                                     virsh_instance=self.test_params.virsh)
         serial_device.add_source(path=filepath)
         # Assume default domain serial device on port 0 and index starts at 0
-        serial_device.add_target(port=str(index + 1))
+        serial_device.add_target(port=str(next(port_number_sequence)))
         if hasattr(self, 'models'):
             this_model = self.models.split(" ")[index]
             if 'sclp' in this_model:
-                serial_device.update_target(index=0, port=str(index+1), type='sclp-serial')
+                serial_device.update_target(
+                        index=0,
+                        port=str(next(port_number_sequence)),
+                        type='sclp-serial')
             serial_device.target_model = this_model
         if hasattr(self, 'alias') and libvirt_version.version_compare(3, 9, 0):
             serial_device.alias = {'name': self.alias + str(index)}
@@ -496,7 +506,7 @@ class Console(AttachDeviceBase):
         console_device = consoleclass(type_name=self.type,
                                       virsh_instance=self.test_params.virsh)
         # Assume default domain console device on port 0 and index starts at 0
-        console_device.add_target(type=self.targettype, port=str(index + 1))
+        console_device.add_target(type=self.targettype, port=str(next(port_number_sequence)))
         if hasattr(self, 'alias') and libvirt_version.version_compare(3, 9, 0):
             console_device.alias = {'name': self.alias + str(index)}
         return console_device
@@ -923,9 +933,16 @@ def update_controllers_ppc(vm_name, vmxml):
     machine = platform.machine().lower()
     if 'ppc64le' in machine:
         # Remove old scsi controller, replace with virtio-scsi controller
-        vmxml.del_controller('scsi')
-        vmxml.sync()
-        virsh.start(vm_name, debug=True, ignore_status=False)
+        device_bus = 'scsi'
+        if not vmxml.get_controllers(device_bus, 'virtio-scsi'):
+            vmxml.del_controller(device_bus)
+            ppc_controller = Controller('controller')
+            ppc_controller.type = device_bus
+            ppc_controller.index = '0'
+            ppc_controller.model = 'virtio-scsi'
+            vmxml.add_device(ppc_controller)
+            vmxml.sync()
+            virsh.start(vm_name, debug=True, ignore_status=False)
 
 
 def run(test, params, env):
@@ -973,7 +990,9 @@ def run(test, params, env):
             if previous_state_running:
                 test_params.main_vm.destroy(gracefully=True)
             libvirt_pcicontr.reset_pci_num(vm_name, 24)
-            logging.debug("Guest XMl with adding many controllers: %s", test_params.main_vm.get_xml())
+            logging.debug(
+                    "Guest XML with many controllers added: %s",
+                    test_params.main_vm.get_xml())
             if previous_state_running:
                 test_params.main_vm.start()
 

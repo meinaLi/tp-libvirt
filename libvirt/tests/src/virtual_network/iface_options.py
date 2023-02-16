@@ -2,7 +2,7 @@ import os
 import re
 import ast
 import time
-import logging
+import logging as log
 import platform
 import shutil
 
@@ -29,6 +29,11 @@ from virttest.libvirt_xml import xcepts
 from virttest.staging import utils_memory
 
 from virttest import libvirt_version
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -153,6 +158,11 @@ def run(test, params, env):
                          " removing from domain xml if present...")
             vmxml.del_seclabel([('model', 'dac')])
 
+            # Remove nvram to avoid permission issue
+            os_xml = vmxml.os
+            os_xml.del_nvram()
+            vmxml.os = os_xml
+
             # Set vm memory to 2G if it's larger than 2G
             if vmxml.memory > 2097152:
                 vmxml.memory = vmxml.current_mem = 2097152
@@ -273,11 +283,12 @@ def run(test, params, env):
         :raise avocado.core.exceptions.TestFail: if commandline doesn't match
         :return: None
         """
-        cmd = ("ps -ef | grep %s | grep -v grep " % vm_name)
+        cmd = ("ps -ef | grep %s | grep qemu-kvm | grep -v grep " % vm_name)
         ret = process.run(cmd, shell=True)
         logging.debug("Command line %s", ret.stdout_text)
         if test_vhost_net:
-            if not ret.stdout_text.count("vhost=on") and not rm_vhost_driver:
+            if not re.search('"vhost":true|vhost=on', ret.stdout_text) \
+                    and not rm_vhost_driver:
                 test.fail("Can't see vhost options in"
                           " qemu-kvm command line")
 
@@ -338,6 +349,11 @@ def run(test, params, env):
                 tmp = opt.rsplit("=")
                 cmd_opt[tmp[0]] = tmp[1]
         logging.debug("Command line options \n%s", cmd_opt)
+        # Because '_' in below attribute name in guest xml will be converted to
+        # '-' in corresponding qemu command line for this page_per_vq option,
+        # we replace it here for the convenience of further comparing.
+        if 'page_per_vq' in driver_dict:
+            driver_dict['page-per-vq'] = driver_dict.pop('page_per_vq')
         logging.debug("setting options \n%s", driver_dict)
 
         for driver_opt in list(driver_dict.keys()):
@@ -430,7 +446,11 @@ def run(test, params, env):
         if not utils_package.package_install(["omping"]):
             test.error("Failed to install omping"
                        " on host")
-        cmd = ("iptables -F;omping -m %s %s" %
+        # open udp port 4321 on host for omping multicast on host
+        # if firewalld is inactive, it will return with "FirewallD is not running"
+        # if firewalld is active, it will open udp port 4321
+        cmd = ("iptables -F; firewall-cmd --add-port=4321/udp;"
+               "omping -m %s %s" %
                (src_addr, "192.168.122.1 %s" %
                 ' '.join(list(vms_ip_dict.values()))))
         # Run a backgroup job waiting for connection of client
@@ -442,7 +462,8 @@ def run(test, params, env):
             if not utils_package.package_install(["omping"], vms_sess_dict[vms]):
                 test.error("Failed to install omping"
                            " on guest")
-            cmd = ("iptables -F; omping -c 5 -T 5 -m %s %s" %
+            cmd = ("iptables -F; firewall-cmd --add-port=4321/udp; "
+                   "omping -c 5 -T 5 -m %s %s" %
                    (src_addr, "192.168.122.1 %s" %
                     vms_ip_dict[vms]))
             ret, output = vms_sess_dict[vms].cmd_status_output(cmd)
@@ -811,11 +832,7 @@ def run(test, params, env):
             if huge_page:
                 vmxml = vm_xml.VMXML.new_from_dumpxml(vm_name)
                 membacking = vm_xml.VMMemBackingXML()
-                hugepages = vm_xml.VMHugepagesXML()
-                pagexml = hugepages.PageXML()
-                pagexml.update(huge_page)
-                hugepages.pages = [pagexml]
-                membacking.hugepages = hugepages
+                membacking.setup_attrs(hugepages={'pages': [huge_page]})
                 vmxml.mb = membacking
 
                 vmxml.vcpu = int(vcpu_num)
@@ -1106,11 +1123,11 @@ def run(test, params, env):
             # Restore vhost_net driver
             process.system("modprobe vhost_net", shell=True)
         if unprivileged_user:
-            virsh.remove_domain(vm_name, **virsh_dargs)
+            virsh.remove_domain(vm_name, "--nvram", **virsh_dargs)
             process.run('rm -f %s' % dst_disk, shell=True)
         if additional_vm:
             virsh.remove_domain(additional_vm.name,
-                                "--remove-all-storage")
+                                "--remove-all-storage --nvram")
             # Kill all omping server process on host
             process.system("pidof omping && killall omping",
                            ignore_status=True, shell=True)

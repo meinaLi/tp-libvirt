@@ -1,5 +1,5 @@
 import os
-import logging
+import logging as log
 
 from virttest import virsh
 from virttest import libvirt_version
@@ -7,6 +7,11 @@ from virttest.libvirt_xml import vm_xml
 from virttest.libvirt_xml import capability_xml
 from virttest.libvirt_xml import domcapability_xml
 from virttest.libvirt_xml.xcepts import LibvirtXMLNotFoundError
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def get_domxml(cpu_mode, vm_name, extract=False):
@@ -87,13 +92,8 @@ def get_invalid_xml(data_xml):
     :return: The instance of VMCPUXML
     """
     invalid_xml = vm_xml.VMCPUXML()
-    with open(data_xml.xml, "r") as data_f, \
-            open(invalid_xml.xml, "w") as new_f:
-        # Discard line with <?xml
-        data_f.readline()
-        new_f.write("<host>{}</host>".format(data_f.read()))
-    # Reload xml content
-    invalid_xml.xmltreefile.parse(invalid_xml.xml)
+    data_xml_content = data_xml.xmltreefile.get_element_string('.')
+    invalid_xml.xml = f'<host>{data_xml_content}</host>'
     return invalid_xml
 
 

@@ -1,5 +1,5 @@
 import re
-import logging
+import logging as log
 import tempfile
 import platform
 
@@ -15,6 +15,11 @@ from virttest.utils_libvirt import libvirt_pcicontr
 from virttest.libvirt_xml.vm_xml import VMXML
 from virttest.libvirt_xml.vm_xml import VMCPUXML
 from virttest.libvirt_xml.devices.controller import Controller
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def remove_devices(vm_xml, type):
@@ -387,11 +392,11 @@ def run(test, params, env):
             if cmpnn_cntlr_num is not None:
                 for num in range(int(cmpnn_cntlr_num)):
                     name = (cmpnn_cntlr_model+str(num+1)).split('-')
-                    pattern = pattern + r"-device.%s-usb-%s.*" % (name[0], name[1])
+                    pattern = pattern + r"-device.*%s-usb-%s.*" % (name[0], name[1])
             elif model == "ehci":
-                pattern = r"-device.usb-ehci"
+                pattern = r"-device.*usb-ehci"
             elif model == "qemu-xhci":
-                pattern = r"-device.qemu-xhci"
+                pattern = r"-device.*qemu-xhci"
 
             logging.debug("pattern is %s", pattern)
 
@@ -799,7 +804,7 @@ def run(test, params, env):
         if remove_nic:
             remove_devices(vm_xml, 'interface')
         # Get the max controller index in current vm xml
-        the_model = 'pci-root' if 'ppc' in platform.machine() else 'pcie-root-port'
+        the_model = 'pci-root' if any(['ppc' in platform.machine(), 's390x' in platform.machine()]) else 'pcie-root-port'
         if add_contrl_list:
             ret_indexes = libvirt_pcicontr.get_max_contr_indexes(vm_xml, 'pci', the_model)
             if ret_indexes and len(ret_indexes) > 0:
@@ -963,7 +968,7 @@ def run(test, params, env):
         if check_qemu:
             if qemu_patterns:
                 if auto_index:
-                    index_str = "%x" % int(auto_indexes_dict['pcie-root-port'][0])
+                    index_str = "%d" % int(auto_indexes_dict['pcie-root-port'][0])
                     qemu_patterns = qemu_patterns % index_str
                     logging.debug("qemu_patterns=%s", qemu_patterns)
                 if qemu_patterns.count('multifunction=on'):

@@ -1,5 +1,5 @@
 import os
-import logging
+import logging as log
 import time
 import math
 import re
@@ -27,18 +27,23 @@ from virttest import libvirt_remote
 from virttest import remote
 from virttest import utils_package
 from virttest import utils_iptables
-from virttest import utils_secret
 from virttest import utils_conn
 from virttest import utils_config
 from virttest import xml_utils
 from virttest import migration
 
+from virttest.utils_libvirt import libvirt_secret
 from virttest.utils_iptables import Iptables
 from virttest.libvirt_xml import vm_xml
 from virttest.utils_test import libvirt
 from virttest.utils_conn import TLSConnection
 from virttest.utils_libvirt import libvirt_config
 from virttest.libvirt_xml.devices.controller import Controller
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -1123,6 +1128,7 @@ def run(test, params, env):
     remove_dict = {}
     remote_libvirt_file = None
     src_libvirt_file = None
+    runner_on_target = None
 
     # Local variables
     vm_name = params.get("migrate_main_vm")
@@ -1221,7 +1227,7 @@ def run(test, params, env):
                                  "sec_desc": "sample vTPM secret",
                                  "sec_usage": "vtpm",
                                  "sec_name": "VTPM_example"}
-                utils_secret.clean_up_secrets()
+                libvirt_secret.clean_up_secrets()
                 tpm_sec_uuid = libvirt.create_secret(auth_sec_dict)
                 logging.debug("tpm sec uuid on source: %s", tpm_sec_uuid)
                 tpm_args.update({"encryption_secret": tpm_sec_uuid})
@@ -1231,7 +1237,7 @@ def run(test, params, env):
                                            encode=True, debug=True)
                 if not remote_virsh_session:
                     remote_virsh_session = virsh.VirshPersistent(**remote_virsh_dargs)
-                utils_secret.clean_up_secrets(remote_virsh_session)
+                libvirt_secret.clean_up_secrets(remote_virsh_session)
                 logging.debug("create secret on target")
                 auth_sec_dict.update({"sec_uuid": tpm_sec_uuid})
                 dest_tmp_sec_uuid = libvirt.create_secret(auth_sec_dict,
@@ -1424,7 +1430,7 @@ def run(test, params, env):
             for elem in local_vmxml.devices.by_device_tag('channel'):
                 logging.debug("Found channel device {}".format(elem))
                 if elem.type_name == channel_type_name:
-                    host_source = elem.source.get('path')
+                    host_source = elem.sources[0].attrs.get('path')
                     logging.debug("Remote guest uses {} for channel device".format(host_source))
                     break
             remote_virsh_session.close_session()
@@ -1559,6 +1565,8 @@ def run(test, params, env):
         if int(mig_result.exit_status) == 0:
             if cmd_in_vm_after_migration:
                 vm.connect_uri = dest_uri
+                if vm.serial_console is None:
+                    vm.create_serial_console()
                 vm_session_after_mig = vm.wait_for_serial_login(timeout=240)
                 vm_session_after_mig.cmd(cmd_in_vm_after_migration)
                 vm_session_after_mig.close()

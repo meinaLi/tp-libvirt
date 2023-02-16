@@ -2,7 +2,7 @@ import os
 import re
 import random
 import uuid
-import logging
+import logging as log
 import time
 
 from threading import Thread
@@ -25,6 +25,11 @@ NC_VSOCK_CMD = os.path.join(NC_VSOCK_DIR, 'nc-vsock')
 NC_VSOCK_SRV_OUT = os.path.join(NC_VSOCK_DIR, "server_out.txt")
 NC_VSOCK_CLI_TXT = os.path.join(NC_VSOCK_DIR, "client_in.txt")
 VSOCK_PORT = 1234
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -191,7 +196,7 @@ def run(test, params, env):
     no_vsock = params.get("no_vsock", "no") == "yes"
     vsock_num = params.get("num")
     communication = params.get("communication", "no") == "yes"
-
+    detach_device_alias = params.get("detach_device_alias", "no") == "yes"
     # Backup xml file
     vmxml = vm_xml.VMXML.new_from_inactive_dumpxml(vm_name)
     backup_xml = vmxml.copy()
@@ -208,7 +213,7 @@ def run(test, params, env):
     else:
         cid = random.randint(3, 10)
         vsock_dev.cid = {'auto': auto_cid, 'address': cid}
-        vsock_dev.alias = {'name': str(uuid.uuid1())}
+        vsock_dev.alias = {'name': 'ua-' + str(uuid.uuid1())}
     logging.debug(vsock_dev)
 
     if start_vm == "no" and vm.is_alive():
@@ -261,8 +266,14 @@ def run(test, params, env):
             def _detach_completed():
                 status = process.run("lsof /dev/vhost-vsock", ignore_status=True, shell=True).exit_status
                 return status == 1
-
-            result = virsh.detach_device(vm_name, vsock_dev.xml, debug=True)
+            if detach_device_alias:
+                result = virsh.detach_device_alias(
+                    vm.name, vsock_dev.alias['name'], ignore_status=False,
+                    debug=True, wait_for_event=True, event_timeout=20)
+            else:
+                result = virsh.detach_device(
+                    vm_name, vsock_dev.xml, debug=True,
+                    wait_for_event=True, event_timeout=20)
             utils_test.libvirt.check_exit_status(result, expect_error=False)
             utils_misc.wait_for(_detach_completed, timeout=20)
             vmxml = vm_xml.VMXML.new_from_dumpxml(vm_name)

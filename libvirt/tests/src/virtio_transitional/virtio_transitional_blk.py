@@ -1,11 +1,12 @@
 import os
 import re
-import logging
+import logging as log
 
 from avocado.utils import download
 
 from virttest import virsh
 from virttest import data_dir
+from virttest import utils_conn
 from virttest import utils_misc
 from virttest import libvirt_version
 from virttest import utils_libvirtd
@@ -13,6 +14,13 @@ from virttest import utils_libvirtd
 from virttest.libvirt_xml import vm_xml
 from virttest.libvirt_xml import devices
 from virttest.utils_test import libvirt
+
+from src.virtio_transitional import virtio_transitional_base
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def find_device(vm, params):
@@ -160,11 +168,12 @@ def run(test, params, env):
 
         v_xml = vm_xml.VMXML.new_from_inactive_dumpxml(vm_name)
         slot = get_free_slot(pci_bridge_index, v_xml)
-        disk_xml = _generate_disk_xml()
-        attach(disk_xml, device_target, plug_method)
+        disk_dev = devices.disk.Disk("file")
+        disk_dev.xml = _generate_disk_xml()
+        attach(disk_dev.xml, device_target, plug_method)
         if plug_method == "cold":
-            disk_xml = _generate_disk_xml()
-        detach(disk_xml, device_target, plug_method)
+            disk_dev.xml = _generate_disk_xml()
+        detach(disk_dev.xml, device_target, plug_method)
         if not utils_misc.wait_for(
                 lambda: not libvirt.device_exists(vm, device_target),
                 detect_time):
@@ -215,6 +224,7 @@ def run(test, params, env):
     pci_bridge_index = None
     tmp_dir = data_dir.get_tmp_dir()
     guest_src_url = params.get("guest_src_url")
+    set_crypto_policy = params.get("set_crypto_policy")
 
     if not libvirt_version.version_compare(5, 0, 0):
         test.cancel("This libvirt version doesn't support "
@@ -226,7 +236,8 @@ def run(test, params, env):
         if not os.path.exists(target_path):
             download.get_file(guest_src_url, target_path)
         params["blk_source_name"] = target_path
-
+    if set_crypto_policy:
+        utils_conn.update_crypto_policy(set_crypto_policy)
     try:
         if add_pcie_to_pci_bridge:
             pci_controllers = vmxml.get_controllers('pci')
@@ -246,6 +257,7 @@ def run(test, params, env):
                 'rhel6' in params.get("shortname")):
             iface_params = {'model': 'virtio-transitional'}
             libvirt.modify_vm_iface(vm_name, "update_iface", iface_params)
+            virtio_transitional_base.remove_rhel6_nvram(vm_name)
         libvirt.set_vm_disk(vm, params)
         if pci_bridge_index:
             v_xml = vm_xml.VMXML.new_from_inactive_dumpxml(vm_name)
@@ -277,3 +289,5 @@ def run(test, params, env):
         backup_xml.sync()
         if guest_src_url and target_path:
             libvirt.delete_local_disk("file", path=target_path)
+        if set_crypto_policy:
+            utils_conn.update_crypto_policy()

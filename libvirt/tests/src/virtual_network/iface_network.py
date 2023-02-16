@@ -2,7 +2,7 @@ import re
 import os
 import sys
 import ast
-import logging
+import logging as log
 import platform
 import shutil
 
@@ -25,6 +25,11 @@ from virttest.libvirt_xml import vm_xml, xcepts
 from virttest.libvirt_xml.network_xml import NetworkXML
 from virttest.libvirt_xml.devices.interface import Interface
 from virttest import libvirt_version
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -754,8 +759,7 @@ TIMEOUT 3"""
                     if net_no_bridge:
                         netxml.del_bridge()
                     if net_no_ip:
-                        netxml.del_ip()
-                        netxml.del_ip()
+                        netxml.del_ips()
                     if net_no_mac:
                         netxml.del_mac()
                 except xcepts.LibvirtXMLNotFoundError:
@@ -1057,6 +1061,8 @@ TIMEOUT 3"""
                 start_clone_vm = virsh.start(vm_clone, debug=True)
                 libvirt.check_exit_status(start_clone_vm)
             else:
+                if vm.is_dead():
+                    vm.start()
                 if serial_login:
                     session = vm.wait_for_serial_login(username=username,
                                                        password=password)
@@ -1229,7 +1235,7 @@ TIMEOUT 3"""
         if vm.is_alive():
             vm.destroy(gracefully=False)
         for vms in vms_list:
-            virsh.remove_domain(vms.name, "--remove-all-storage")
+            virsh.remove_domain(vms.name, "--remove-all-storage --nvram")
         logging.info("Restoring network...")
         if net_name == "default":
             netxml_backup.sync()

@@ -1,5 +1,5 @@
 import time
-import logging
+import logging as log
 import os
 import re
 
@@ -13,6 +13,11 @@ from virttest.utils_misc import wait_for
 from virttest import data_dir
 
 from virttest import libvirt_version
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def prepare_boot_xml(vmxml, params):
@@ -36,7 +41,7 @@ def prepare_boot_xml(vmxml, params):
     logging.debug("Set boot loader common attributes")
     dict_os_attrs.update({"bootmenu_enable": bootmenu_enable})
     dict_os_attrs.update({"bootmenu_timeout": bootmenu_timeout})
-    if loader:
+    if boot_type == "seabios" or (boot_type == "ovmf" and not libvirt_version.version_compare(8, 5, 0)):
         dict_os_attrs.update({"loader": loader})
         dict_os_attrs.update({"loader_type": loader_type})
         dict_os_attrs.update({"loader_readonly": readonly})
@@ -44,12 +49,12 @@ def prepare_boot_xml(vmxml, params):
         dict_os_attrs.update({"smbios_mode": smbios_mode})
 
     # Set Uefi special attributes
-    if boot_type == "ovmf":
+    if boot_type == "ovmf" and not libvirt_version.version_compare(8, 5, 0):
         logging.debug("Set Uefi special attributes")
         nvram = params.get("nvram", "")
         nvram_template = params.get("template", "")
         dict_os_attrs.update({"nvram": nvram})
-        dict_os_attrs.update({"nvram_template": nvram_template})
+        dict_os_attrs.update({"nvram_attrs": {"template": nvram_template}})
 
     # Set Seabios special attributes
     if boot_type == "seabios":
@@ -201,6 +206,8 @@ def run(test, params, env):
     with_snapshot = "yes" == params.get("with_snapshot", "no")
     snapshot_take = int(params.get("snapshot_take", "1"))
     postfix = params.get("postfix", "")
+
+    external_snapshot = None
 
     # Back VM XML
     vmxml = vm_xml.VMXML.new_from_dumpxml(vm_name)

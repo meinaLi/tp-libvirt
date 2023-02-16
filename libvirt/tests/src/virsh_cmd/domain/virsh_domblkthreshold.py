@@ -1,5 +1,5 @@
 import os
-import logging
+import logging as log
 import aexpect
 import re
 import threading
@@ -19,12 +19,16 @@ from virttest import libvirt_storage
 
 from virttest.utils_test import libvirt
 from virttest.utils_nbd import NbdExport
+from virttest.utils_libvirt import libvirt_secret
 
 from virttest.libvirt_xml import vm_xml, vol_xml, xcepts
 from virttest.libvirt_xml.devices.disk import Disk
 
 from virttest import libvirt_version
-from virttest import utils_secret
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -241,7 +245,7 @@ def run(test, params, env):
     libvirt_version.is_libvirt_feature_supported(params)
     try:
         # Clean up dirty secrets in test environments if there are.
-        utils_secret.clean_up_secrets()
+        libvirt_secret.clean_up_secrets()
         # Setup backend storage
         if backend_storage_type == "file":
             image_filename = params.get("image_filename", "raw.img")

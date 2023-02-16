@@ -1,6 +1,6 @@
 import re
 import os
-import logging
+import logging as log
 import time
 
 from virttest import virsh
@@ -10,6 +10,11 @@ from virttest import utils_misc
 from virttest import libvirt_version
 from virttest.utils_test import libvirt
 from virttest.libvirt_xml import vm_xml
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def manipulate_domain(test, vm_name, action, recover=False):
@@ -284,10 +289,6 @@ def run(test, params, env):
     # Check guest dumpxml and qemu command in with_packed attribute
     if with_packed:
         expect_xml_line = expect_xml_line % driver_packed
-        if utils_misc.compare_qemu_version(6, 2, 0, is_rhev=False):
-            expect_qemu_line = expect_qemu_line % "true"
-        else:
-            expect_qemu_line = expect_qemu_line % driver_packed
         libvirt.check_dumpxml(vm, expect_xml_line)
         libvirt.check_qemu_cmd_line(expect_qemu_line)
 
@@ -426,11 +427,11 @@ def run(test, params, env):
             # Don't care about memory comparison on error test
             def verify_outside_result():
                 _, test_outside_mem = get_vm_mem()
-                return(cal_deviation(test_outside_mem, expected_outside_mem) <= delta_percentage)
+                return (cal_deviation(test_outside_mem, expected_outside_mem) <= delta_percentage)
 
             def verify_inside_result():
                 test_inside_mem, _ = get_vm_mem()
-                return(cal_deviation(test_inside_mem, expected_inside_mem) <= delta_percentage)
+                return (cal_deviation(test_inside_mem, expected_inside_mem) <= delta_percentage)
 
             msg = "test conditions not met: "
             error_flag = 0

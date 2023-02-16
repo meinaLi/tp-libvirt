@@ -1,16 +1,23 @@
 import os
-import logging
+import logging as log
 
 from avocado.utils import download
 from avocado.utils import process
 
 from virttest import data_dir
 from virttest import virsh
+from virttest import utils_conn
 from virttest import utils_misc
 from virttest import libvirt_version
 
 from virttest.libvirt_xml import vm_xml
 from virttest.utils_test import libvirt
+
+from src.virtio_transitional import virtio_transitional_base
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -56,7 +63,7 @@ def run(test, params, env):
             else:
                 other_ports.add(controller.get('index'))
         # Record the addresses being allocated for all pci devices
-        pci_devices = vmxml.xmltreefile.find('devices').getchildren()
+        pci_devices = list(vmxml.xmltreefile.find('devices'))
         for dev in pci_devices:
             address = dev.find('address')
             if address is not None:
@@ -115,6 +122,7 @@ def run(test, params, env):
     hotplug = (params.get('hotplug', 'no') == 'yes')
     device_exists = (params.get('device_exists', 'yes') == 'yes')
     plug_to = params.get('plug_to', '')
+    set_crypto_policy = params.get("set_crypto_policy")
 
     if not libvirt_version.version_compare(5, 0, 0):
         test.cancel("This libvirt version doesn't support "
@@ -127,6 +135,8 @@ def run(test, params, env):
         if not os.path.exists(target_path):
             download.get_file(guest_src_url, target_path)
         params["blk_source_name"] = target_path
+    if set_crypto_policy:
+        utils_conn.update_crypto_policy(set_crypto_policy)
 
     try:
         # Add 'pcie-to-pci-bridge' if there is no one
@@ -144,11 +154,12 @@ def run(test, params, env):
                 .get_controllers('pci', 'pcie-to-pci-bridge')[0]
         pci_bridge_index = '%0#4x' % int(pci_bridge.get("index"))
 
-        # Update nic and vm disks
+        # Update nic/nvram and vm disks
         if (params["os_variant"] == 'rhel6' or
                 'rhel6' in params.get("shortname")):
             iface_params = {'model': 'virtio-transitional'}
             libvirt.modify_vm_iface(vm_name, "update_iface", iface_params)
+            virtio_transitional_base.remove_rhel6_nvram(vm_name)
         libvirt.set_vm_disk(vm, params)
         # vmxml will not be updated since set_vm_disk
         # sync with another dumped xml inside the function
@@ -164,7 +175,7 @@ def run(test, params, env):
         # General new rng xml per configurations
         rng_xml = libvirt.create_rng_xml({"rng_model": virtio_model})
         if params.get('specify_addr', 'no') == 'yes':
-            pci_devices = vmxml.xmltreefile.find('devices').getchildren()
+            pci_devices = list(vmxml.xmltreefile.find('devices'))
             addr = rng_xml.new_rng_address()
             if plug_to == 'pcie-root-port':
                 bus = get_free_root_port()
@@ -211,3 +222,5 @@ def run(test, params, env):
 
         if guest_src_url and target_path:
             libvirt.delete_local_disk("file", path=target_path)
+        if set_crypto_policy:
+            utils_conn.update_crypto_policy()

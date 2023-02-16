@@ -1,4 +1,4 @@
-import logging
+import logging as log
 import os
 import time
 import re
@@ -19,14 +19,19 @@ from virttest import virsh
 from virttest import qemu_storage
 from virttest import data_dir
 from virttest import utils_misc
-from virttest import utils_secret
 from virttest.libvirt_xml import vm_xml
 from virttest.libvirt_xml import snapshot_xml
 from virttest.utils_test import libvirt as utl
+from virttest.utils_libvirt import libvirt_secret
 
 from virttest.libvirt_xml.devices.disk import Disk
 
 from provider import libvirt_version
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 class JobTimeout(Exception):
@@ -500,6 +505,11 @@ def run(test, params, env):
 
         :param snapshot_numbers_take: snapshot numbers.
         """
+        if params.get("start_vm") == "yes":
+            if not vm.is_alive():
+                vm.start()
+            vm.wait_for_login().close()
+
         for count in range(0, snapshot_numbers_take):
             snap_xml = snapshot_xml.SnapshotXML()
             snapshot_name = "blockcopy_snap"
@@ -550,8 +560,8 @@ def run(test, params, env):
                     back_path = utl.setup_or_cleanup_iscsi(is_setup=True,
                                                            is_login=True,
                                                            image_size="1G",
-                                                           emulated_image=back_n)
-                    emulated_iscsi.append(back_n)
+                                                           emulated_image=back_n+str(count))
+                    emulated_iscsi.append(back_n+str(count))
                     cmd = "qemu-img create -f qcow2 %s 1G" % back_path
                     process.run(cmd, shell=True)
                     new_attrs.update({'dev': back_path})
@@ -565,6 +575,11 @@ def run(test, params, env):
             new_disks.append(disk_xml)
 
             snap_xml.set_disks(new_disks)
+
+            # Make sure snap xml not exist backingstore tag
+            snap_xml.xmltreefile.remove_by_xpath('/disks/disk/backingStore',
+                                                 remove_all=True)
+            snap_xml.xmltreefile.write()
             snapshot_xml_path = snap_xml.xml
             logging.debug("The snapshot xml is: %s" % snap_xml.xmltreefile)
 
@@ -586,7 +601,7 @@ def run(test, params, env):
         tmp_file += dest_extension
         if not dest_path:
             if enable_iscsi_auth:
-                utils_secret.clean_up_secrets()
+                libvirt_secret.clean_up_secrets()
                 setup_auth_enabled_iscsi_disk(vm, params)
                 dest_path = os.path.join(tmp_dir, tmp_file)
             elif with_blockdev:
@@ -620,7 +635,7 @@ def run(test, params, env):
 
         # Prepare transient/persistent vm
         if persistent_vm == "no" and vm.is_persistent():
-            vm.undefine()
+            virsh.undefine(vm_name, '--nvram', ignore_status=False)
         elif persistent_vm == "yes" and not vm.is_persistent():
             new_xml.define()
 
@@ -662,7 +677,7 @@ def run(test, params, env):
         if not status_error:
             if status == 0:
                 ret = utils_misc.wait_for(
-                    lambda: check_xml(vm_name, target, dest_path, options), 5)
+                    lambda: check_xml(vm_name, target, dest_path, options), 20)
                 if not ret:
                     raise exceptions.TestFail("Domain xml not expected after"
                                               " blockcopy")

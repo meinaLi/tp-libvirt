@@ -1,5 +1,5 @@
 import os
-import logging
+import logging as log
 import aexpect
 import shutil
 import stat
@@ -11,6 +11,11 @@ from virttest.libvirt_xml.vm_xml import VMXML
 from virttest.libvirt_xml.devices.channel import Channel
 from virttest.utils_test import libvirt as utlv
 from virttest import data_dir
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -72,7 +77,7 @@ def run(test, params, env):
             address_dict['port'] = '%s' % port_id
 
         channel_tmp = Channel(type_name=channel_type)
-        channel_tmp.source = source_dict
+        channel_tmp.sources = [{'attrs': source_dict}]
         channel_tmp.target = target_dict
         channel_tmp.address = address_dict
 
@@ -104,7 +109,7 @@ def run(test, params, env):
             target_dict['port'] = target_port
 
         if source_dict:
-            channel.source = source_dict
+            channel.sources = [{'attrs': source_dict}]
         if target_dict:
             channel.target = target_dict
 
@@ -156,7 +161,7 @@ def run(test, params, env):
         expected_channel = Channel(channel_type)
 
         try:
-            source_dict = channel.source
+            source_dict = channel.fetch_attrs()['sources'][0]['attrs']
         except LibvirtXMLNotFoundError:
             source_dict = {}
 
@@ -194,7 +199,7 @@ def run(test, params, env):
                 target_dict['port'] = channel.target['port']
 
         if source_dict:
-            expected_channel.source = source_dict
+            expected_channel.sources = [{'attrs': source_dict}]
         if target_dict:
             expected_channel.target = target_dict
 

@@ -1,4 +1,4 @@
-import logging
+import logging as log
 
 from avocado.utils import process
 
@@ -7,6 +7,11 @@ from virttest import remote
 from virttest import virsh
 from virttest.utils_test import libvirt
 from virttest.libvirt_xml import vm_xml
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -60,7 +65,7 @@ def run(test, params, env):
 
             # Add user
             if add_user:
-                cmd = " rm -f /etc/gshadow.lock & useradd %s" % set_user_name
+                cmd = " rm -f /etc/gshadow.lock /etc/subgid.lock & useradd %s" % set_user_name
                 status, output = session.cmd_status_output(cmd)
                 if status:
                     test.error("Adding user '%s' got failed: '%s'" %
@@ -120,7 +125,7 @@ def run(test, params, env):
             # Del user
             if add_user:
                 session = vm.wait_for_login(timeout=30, username="root", password=ori_passwd)
-                cmd = "userdel -r %s" % set_user_name
+                cmd = "userdel -f -r %s" % set_user_name
                 status, output = session.cmd_status_output(cmd)
                 if status:
                     test.error("Deleting user '%s' got failed: '%s'" %

@@ -1,11 +1,13 @@
 import re
 import os
-import logging
+import logging as log
 import json
+import shutil
 
 from avocado.utils import distro
 from avocado.utils import process
 
+from virttest import data_dir
 from virttest import virsh
 from virttest import remote
 from virttest import utils_config
@@ -23,6 +25,11 @@ from virttest.utils_test.libvirt import connect_libvirtd
 from virttest.utils_test.libvirt import customize_libvirt_config
 from virttest.utils_test.libvirt import remotely_control_libvirtd
 from virttest.utils_net import check_listening_port_remote_by_service
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def remote_access(params, test):
@@ -165,7 +172,56 @@ def change_libvirtconf_on_client(params_to_change_dict):
     return config
 
 
+def change_ssh_conf_on_client(filepath, hostname):
+    """
+    Create a ssh config file for at the filepath specified.
+
+    :param filepath: String, File location to copy the config to
+    :param hostname: String, hostname of the host in config
+    """
+    with open(filepath, "w") as ssh_config_file:
+        data = (f"Host {hostname}\n"
+                "KexAlgorithms            +diffie-hellman-group14-sha1\n"
+                "MACs                     +hmac-sha1\n"
+                "HostKeyAlgorithms        +ssh-rsa\n"
+                "PubkeyAcceptedKeyTypes   +ssh-rsa\n"
+                "PubkeyAcceptedAlgorithms +ssh-rsa\n")
+        ssh_config_file.write(data)
+
+
+def change_openssl_conf_on_client(filepath):
+    """
+    Create a Open SSL config file for at the filepath specified.
+
+    :param filepath: String, File location to copy the config to
+    """
+    with open(filepath, "x") as openssl_config_file:
+        data = (".include /etc/ssl/openssl.cnf\n"
+                "[openssl_init]\n"
+                "alg_section = evp_properties\n"
+                "[evp_properties]\n"
+                "rh-allow-sha1-signatures = yes\n")
+        openssl_config_file.write(data)
+
+
+def create_file_backup(filepath):
+    """
+    Create a backup file next to the original specified in filepath.
+
+    :param filepath: String, path to the file that should be backed up
+    :returns backup_path: String, path to the backup that was created
+    """
+    backup_path = filepath + ".bkp"
+    shutil.copy(filepath, backup_path)
+    return backup_path
+
+
 def restore_libvirtconf_on_client(config):
+    """
+    Change libvirt configuration to the one specified in config argument.
+
+    :param config: The configuration to restore to
+    """
     customize_libvirt_config({}, is_recover=True, config_type="libvirt",
                              config_object=config)
 
@@ -176,6 +232,10 @@ def run(test, params, env):
     """
 
     test_dict = dict(params)
+    socket_access_controls_cfg_file = test_dict.get("socket_access_controls_cfg_file", "no")
+    if socket_access_controls_cfg_file == "yes":
+        if libvirt_version.version_compare(6, 0, 0):
+            test.cancel("This libvirt version doesn't support socket access controls by cfg file.")
     pattern = test_dict.get("filter_pattern", "")
     if ('@LIBVIRT' in pattern and
             distro.detect().name == 'rhel' and
@@ -188,6 +248,16 @@ def run(test, params, env):
     status_error = test_dict.get("status_error", "no")
     allowed_dn_str = params.get("tls_allowed_dn_list")
     if allowed_dn_str:
+        # According to bug 2018488, some cases status changed
+        change_status = test_dict.get("change_status_in_new_version", "no")
+        if (change_status == "yes" and
+                distro.detect().name == "rhel" and
+                int(distro.detect().version) > 8):
+            if status_error == "yes":
+                status_error = "no"
+            else:
+                status_error = "yes"
+            test_dict['status_error'] = status_error
         allowed_dn_list = []
         if not libvirt_version.version_compare(1, 0, 0):
             # Reverse the order in the dn list to workaround the
@@ -204,6 +274,8 @@ def run(test, params, env):
     listen_addr = test_dict.get("listen_addr", "0.0.0.0")
     ssh_port = test_dict.get("ssh_port", "")
     tcp_port = test_dict.get("tcp_port", "")
+    tcp_min_ssf = test_dict.get("tcp_min_ssf")
+    default_tcp_min_ssf = test_dict.get("default_tcp_min_ssf", '112')
     server_ip = test_dict.get("server_ip")
     server_user = test_dict.get("server_user")
     server_pwd = test_dict.get("server_pwd")
@@ -249,6 +321,17 @@ def run(test, params, env):
     auth_unix_rw = test_dict.get("auth_unix_rw")
     kinit_pwd = test_dict.get("kinit_pwd")
     test_alias = test_dict.get("test_alias")
+    ssh_config_path = None
+    ssh_config_backup_path = None
+    openssl_config_path = None
+
+    if libvirt_version.version_compare(8, 5, 0):
+        ssh_config_path = test_dict.get("ssh_config_path")
+        openssl_config_name = test_dict.get("openssl_config_name")
+        if openssl_config_name:
+            openssl_config_path = os.path.join(data_dir.get_tmp_dir(), openssl_config_name)
+
+    libvirt_version.is_libvirt_feature_supported(params)
 
     config_list = []
     port = ""
@@ -281,6 +364,17 @@ def run(test, params, env):
         # https://libguestfs.org/virt-v2v-input-xen.1.html#ssh-authentication
         crypto_policies = process.run("update-crypto-policies --set LEGACY",
                                       ignore_status=False)
+
+    # Another bug check below
+    if driver == "xen":
+        if libvirt_version.version_compare(8, 5, 0):
+            if ssh_config_path:
+                if os.path.exists(ssh_config_path):
+                    ssh_config_backup_path = create_file_backup(ssh_config_path)
+                change_ssh_conf_on_client(ssh_config_path, uri_path)
+            if openssl_config_path:
+                change_openssl_conf_on_client(openssl_config_path)
+                test_dict["extra_env"] = f"OPENSSL_CONF={openssl_config_path}"
 
     # only simply connect libvirt daemon then return
     if no_any_config == "yes":
@@ -405,6 +499,14 @@ def run(test, params, env):
                 objs_list.append(tcp_obj)
             # setup test environment
             tcp_obj.conn_setup()
+            if tcp_min_ssf and int(tcp_min_ssf) < int(default_tcp_min_ssf):
+                server_session = remote.wait_for_login('ssh', server_ip, '22',
+                                                       server_user, server_pwd,
+                                                       r"[\#\$]\s*$")
+                libvirtd = Libvirtd(session=server_session, service_name='virtproxy')
+                if libvirtd.is_running():
+                    test.fail("virtproxyd/libvirtd should fail to restart if tcp_min_ssf "
+                              "is less than %s" % default_tcp_min_ssf)
 
         # create a directory if needs
         if mkdir_cmd:
@@ -484,12 +586,10 @@ def run(test, params, env):
         # change /etc/pki/libvirt/servercert.pem then
         # restart libvirt service on the remote host
         if tls_sanity_cert == "no" and ca_cn_new:
-            test_dict['ca_cn'] = ca_cn_new
-            test_dict['scp_new_cacert'] = 'no'
-            tls_obj_new = TLSConnection(test_dict)
-            test_dict['tls_obj_new'] = tls_obj_new
+            tls_obj.ca_cn = ca_cn_new
+            tls_obj.scp_new_cacert = "no"
             # only setup new CA and server
-            tls_obj_new.conn_setup(True, False)
+            tls_obj.conn_setup(True, False)
 
         # obtain and cache a ticket
         if kinit_pwd and sasl_type == 'gssapi' and auth_unix_rw == 'sasl':
@@ -566,3 +666,13 @@ def run(test, params, env):
 
         if polkit_pkla and os.path.isfile(polkit_pkla):
             os.unlink(polkit_pkla)
+
+        if ssh_config_path:
+            os.remove(ssh_config_path)
+
+        if ssh_config_backup_path:
+            shutil.copy(ssh_config_backup_path, ssh_config_path)
+            os.remove(ssh_config_backup_path)
+
+        if openssl_config_path:
+            os.remove(openssl_config_path)

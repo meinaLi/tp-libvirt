@@ -1,5 +1,5 @@
 import os
-import logging
+import logging as log
 import random
 import string
 import platform
@@ -8,7 +8,12 @@ from virttest import virsh
 from virttest import libvirt_version
 from virttest.utils_test import libvirt
 from virttest.libvirt_xml.vm_xml import VMXML
-from virttest.libvirt_xml.devices import librarian
+from virttest.libvirt_xml.devices.serial import Serial
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -44,7 +49,7 @@ def run(test, params, env):
         Prepare a serial device XML
         """
         local_serial_type = serial_type
-        serial = librarian.get('serial')(local_serial_type)
+        serial = Serial(local_serial_type)
         serial.target_port = "0"
         serial.alias = {'name': alias_name}
 
@@ -57,7 +62,7 @@ def run(test, params, env):
             for att in source_str.split(','):
                 key, val = att.split(':')
                 source_dict[key] = val
-            sources.append(source_dict)
+            sources.append({'attrs': source_dict})
         serial.sources = sources
         return serial
 
@@ -116,6 +121,7 @@ def run(test, params, env):
         vm_xml.sync()
 
         vm.start()
+        vm.wait_for_login().close()
         check_vm_xml()
 
         # Hot detach device by its alias name.

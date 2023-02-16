@@ -4,6 +4,7 @@ import aexpect
 from avocado.utils import download
 
 from virttest import data_dir
+from virttest import utils_conn
 from virttest import utils_misc
 from virttest import libvirt_version
 
@@ -11,6 +12,8 @@ from virttest.libvirt_xml import vm_xml
 from virttest.utils_test import libvirt
 from virttest.libvirt_xml.devices.channel import Channel
 from virttest.libvirt_xml.devices.console import Console
+
+from src.virtio_transitional import virtio_transitional_base
 
 
 def run(test, params, env):
@@ -74,6 +77,7 @@ def run(test, params, env):
     add_pcie_to_pci_bridge = params.get("add_pcie_to_pci_bridge")
     guest_src_url = params.get("guest_src_url")
     virtio_model = params['virtio_model']
+    set_crypto_policy = params.get("set_crypto_policy")
 
     if not libvirt_version.version_compare(5, 0, 0):
         test.cancel("This libvirt version doesn't support "
@@ -86,6 +90,8 @@ def run(test, params, env):
         if not os.path.exists(target_path):
             download.get_file(guest_src_url, target_path)
         params["blk_source_name"] = target_path
+    if set_crypto_policy:
+        utils_conn.update_crypto_policy(set_crypto_policy)
 
     try:
         # Add pcie-to-pci-bridge when it is required
@@ -109,6 +115,7 @@ def run(test, params, env):
         iface_params = {'model': 'virtio-transitional'}
         libvirt.modify_vm_iface(vm_name, "update_iface", iface_params)
         libvirt.set_vm_disk(vm, params)
+        virtio_transitional_base.remove_rhel6_nvram(vm_name)
         # vmxml will not be updated since set_vm_disk
         # sync with another dumped xml inside the function
         vmxml = vm_xml.VMXML.new_from_inactive_dumpxml(vm_name)
@@ -124,7 +131,7 @@ def run(test, params, env):
         contr_dict = {'controller_type': 'virtio-serial',
                       'controller_model': virtio_model}
         if add_pcie_to_pci_bridge:
-            pci_devices = vmxml.xmltreefile.find('devices').getchildren()
+            pci_devices = list(vmxml.xmltreefile.find('devices'))
             slot = get_free_pci_slot()
             addr = '{"bus": %s, "slot": %s}' % (pci_bridge_index, slot)
             contr_dict.update({'controller_addr': addr})
@@ -162,3 +169,5 @@ def run(test, params, env):
 
         if guest_src_url and target_path:
             libvirt.delete_local_disk("file", path=target_path)
+        if set_crypto_policy:
+            utils_conn.update_crypto_policy()

@@ -1,9 +1,14 @@
-import logging
+import logging as log
 
 from virttest.utils_test import libvirt
 from virttest import libvirt_xml
 from virttest import utils_test
 from virttest import virsh
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def define_and_check_xml(vmxml, params):
@@ -31,14 +36,7 @@ def define_and_check_xml(vmxml, params):
     vmxml.cpu = vmcpuxml
 
     mem_backing = libvirt_xml.vm_xml.VMMemBackingXML()
-    hugepages = libvirt_xml.vm_xml.VMHugepagesXML()
-    pagexml = hugepages.PageXML()
-    pagexml_list = []
-    for page in pages:
-        pagexml.update(page)
-        pagexml_list.append(pagexml)
-    hugepages.pages = pagexml_list
-    mem_backing.hugepages = hugepages
+    mem_backing.setup_attrs(hugepages={'pages': pages})
     logging.debug('membacking xml is: %s', mem_backing)
     vmxml.mb = mem_backing
 

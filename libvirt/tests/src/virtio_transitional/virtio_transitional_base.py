@@ -32,7 +32,7 @@ def get_free_pci_slot(vm_name):
     """
     vmxml = vm_xml.VMXML.new_from_inactive_dumpxml(vm_name)
     pci_bridge_index = get_pci_bridge_index(vm_name)
-    pci_devices = vmxml.xmltreefile.find('devices').getchildren()
+    pci_devices = list(vmxml.xmltreefile.find('devices'))
     used_slot = []
     for dev in pci_devices:
         address = dev.find('address')
@@ -86,7 +86,7 @@ def get_free_root_port(vm_name):
         else:
             other_ports.add(controller.get('index'))
     # Record the addresses being allocated for all pci devices
-    pci_devices = vmxml.xmltreefile.find('devices').getchildren()
+    pci_devices = list(vmxml.xmltreefile.find('devices'))
     for dev in pci_devices:
         address = dev.find('address')
         if address is not None:
@@ -106,3 +106,20 @@ def get_free_root_port(vm_name):
             libvirt.add_controller(vm_name, cntl_add)
             return "%0#4x" % int(index)
     return None
+
+
+def remove_rhel6_nvram(vm_name):
+    """
+    Remove nvram setting for rhel6 guest
+
+    :param vm_name: VM name
+    """
+    vmxml = vm_xml.VMXML.new_from_inactive_dumpxml(vm_name)
+    os_xml = vmxml.os
+    if os_xml.fetch_attrs().get('os_firmware') == 'efi':
+        os_xml.del_os_firmware()
+    os_xml.del_nvram()
+    os_xml.del_loader()
+    vmxml.os = os_xml
+    vmxml.xmltreefile.write()
+    vmxml.sync("--nvram")

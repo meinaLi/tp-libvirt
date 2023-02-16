@@ -1,4 +1,4 @@
-import logging
+import logging as log
 
 from virttest import virsh
 from virttest import libvirt_xml
@@ -9,6 +9,11 @@ from virttest.libvirt_xml import capability_xml
 from virttest.libvirt_xml.devices.iommu import Iommu
 
 from virttest import libvirt_version
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -65,6 +70,16 @@ def run(test, params, env):
                 logging.debug('Test passed as the reported max vcpu num is %s', report_num)
             else:
                 test.fail('Test failed as the reported max vcpu num is not as expected.')
+            str_in_domcap = "<vcpu max='%s'/>" % report_num
+            output_domcap = virsh.domcapabilities().stdout_text.strip()
+            if str_in_domcap not in output_domcap:
+                logging.debug("The output of virsh domcapabilities:"
+                              "\n%s", output_domcap)
+                test.fail("%s is expected in virsh domcapabilities, "
+                          "but not found %s".format(str_in_domcap))
+            else:
+                logging.debug('Test passed as the reported max vcpu num '
+                              'in domcapabilities is %s', report_num)
 
         # Check the output of "virsh capabilities" for both i440fx and q35 VM
         if check == "virsh_capabilities":

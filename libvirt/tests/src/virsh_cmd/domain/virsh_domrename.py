@@ -1,4 +1,4 @@
-import logging
+import logging as log
 import os
 
 from avocado.utils import path as utils_path
@@ -12,6 +12,11 @@ from virttest import utils_libguestfs
 from virttest import utils_package
 from virttest import utils_libvirtd
 from virttest import libvirt_version
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -147,7 +152,7 @@ def run(test, params, env):
                 new_vm.destroy(gracefully=False)
             if pre_vm_state == "with_snapshot":
                 libvirt.clean_up_snapshots(new_name)
-            new_vm.undefine()
+            new_vm.undefine(options='--nvram')
 
         # Recover domain state
         if pre_vm_state != "shutoff":

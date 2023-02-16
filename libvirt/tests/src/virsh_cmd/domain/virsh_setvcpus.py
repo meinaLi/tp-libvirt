@@ -1,6 +1,6 @@
 import re
 import os
-import logging
+import logging as log
 
 from virttest import ssh_key
 from virttest import data_dir
@@ -8,6 +8,11 @@ from virttest import virsh
 from virttest.libvirt_xml import vm_xml, xcepts
 from virttest.libvirt_xml.vm_xml import VMCPUXML
 from virttest import cpu
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -28,6 +33,7 @@ def run(test, params, env):
     options = params.get("setvcpus_options")
     vm_ref = params.get("setvcpus_vm_ref", "name")
     status_error = (params.get("status_error", "no") == "yes")
+    check_numa = (params.get("check_numa", "yes") == "yes")
     convert_err = "Can't convert {0} to integer type"
     try:
         current_vcpu = int(params.get("setvcpus_current", "1"))
@@ -245,8 +251,10 @@ def run(test, params, env):
                     set_expected(vm, options + " live")
 
                 set_expected(vm, options)
+                logging.debug("check_numa value %s", check_numa)
                 result = cpu.check_vcpu_value(vm, exp_vcpu,
-                                              option=options)
+                                              option=options,
+                                              check_numa=check_numa)
         setvcpu_exit_status = status.exit_status
         setvcpu_exit_stderr = status.stderr.strip()
 

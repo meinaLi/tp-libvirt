@@ -1,4 +1,4 @@
-import logging
+import logging as Log
 import re
 
 from virttest.libvirt_xml.vm_xml import VMXML
@@ -6,12 +6,16 @@ from virttest.libvirt_xml.devices.video import Video
 from virttest.utils_test import libvirt
 from virttest import virsh
 from virttest import libvirt_version
-from virttest import utils_misc
 
 from six import iteritems
 
 from math import ceil
 from math import log
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = Log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -108,6 +112,8 @@ def run(test, params, env):
         if is_primary or is_primary is None:
             if model_type == "vga":
                 pattern = r"-device.*VGA"
+            elif model_type == "bochs":
+                pattern = r"-device.*bochs-display"
             else:
                 pattern = r"-device.*%s-vga" % model_type
             if guest_arch == 's390x':
@@ -123,10 +129,7 @@ def run(test, params, env):
             elif model_type == "virtio":
                 pattern = r"-device.*virtio-gpu-pci"
                 if with_packed:
-                    if utils_misc.compare_qemu_version(6, 2, 0, is_rhev=False):
-                        pattern = r"-device.*virtio-gpu-pci.*packed\W{1,2}%s" % "true"
-                    else:
-                        pattern = r"-device.*virtio-gpu-pci.*packed\W{1,2}%s" % driver_packed
+                    pattern = r"-device.*virtio-gpu-pci.*packed\W{1,2}(true|on)"
             if guest_arch == 's390x':
                 pattern = s390x_pattern
             if not re.search(pattern, cmdline):
@@ -182,6 +185,9 @@ def run(test, params, env):
         if mem_type == "vram" and model_type == "vga":
             cmd_mem_size = str(int(mem_size)//1024)
             pattern = r"-device.*VGA.*vgamem_mb\W{1,2}%s" % cmd_mem_size
+        if mem_type == "vram" and model_type == "bochs":
+            cmd_mem_size = str(int(mem_size)*1024)
+            pattern = r"-device.*bochs.*vgamem\W{1,2}%s" % cmd_mem_size
         if mem_type == "vgamem":
             cmd_mem_size = str(int(mem_size)//1024)
             pattern = r"-device.*qxl-vga.*vgamem_mb\W{1,2}%s" % cmd_mem_size

@@ -2,7 +2,7 @@ import os
 import stat
 import pwd
 import grp
-import logging
+import logging as log
 
 from avocado.utils import process
 
@@ -12,6 +12,11 @@ from virttest import utils_config
 from virttest import utils_libvirtd
 from virttest import libvirt_version
 from virttest.libvirt_xml.vm_xml import VMXML
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def check_qemu_grp_user(user, test):
@@ -86,6 +91,18 @@ def format_user_group_str(user, group):
     return label_str
 
 
+def set_tpm_perms(swtpm_lib):
+    """
+    Set the perms of swtpm lib to allow other users to write in the dir
+
+    :param swtpm_lib: the dir of swtpm lib
+    """
+    cmd = "getfacl -R %s > /tmp/permis.facl" % swtpm_lib
+    process.run(cmd, ignore_status=True, shell=True)
+    cmd = "chmod -R 777 %s" % swtpm_lib
+    process.run(cmd, ignore_status=False, shell=True)
+
+
 def run(test, params, env):
     """
     Test DAC setting in both domain xml and qemu.conf.
@@ -101,6 +118,7 @@ def run(test, params, env):
     status_error = ('yes' == params.get("status_error", 'no'))
     host_sestatus = params.get("dac_start_destroy_host_selinux", "enforcing")
     qemu_group_user = "yes" == params.get("qemu_group_user", "no")
+    swtpm_lib = params.get("swtpm_lib")
     # Get variables about seclabel for VM.
     sec_type = params.get("dac_start_destroy_vm_sec_type", "dynamic")
     sec_model = params.get("dac_start_destroy_vm_sec_model", "dac")
@@ -201,12 +219,18 @@ def run(test, params, env):
             # Set qemu.conf for user and group
             if qemu_user:
                 qemu_conf.user = qemu_user
+                if not dynamic_ownership:
+                    qemu_conf.swtpm_user = qemu_user
             if qemu_group:
                 qemu_conf.group = qemu_group
+                if not dynamic_ownership:
+                    qemu_conf.swtpm_group = qemu_group
             if dynamic_ownership:
                 qemu_conf.dynamic_ownership = 1
             else:
                 qemu_conf.dynamic_ownership = 0
+                if vmxml.devices.by_device_tag('tpm') is not None:
+                    set_tpm_perms(swtpm_lib)
             if security_default_confined:
                 qemu_conf.security_default_confined = security_default_confined
             if set_process_name:
@@ -226,6 +250,22 @@ def run(test, params, env):
             vmxml.set_seclabel([sec_dict])
             vmxml.sync()
             logging.debug("updated domain xml is: %s" % vmxml.xmltreefile)
+
+        # Change ownership of VARS.fd file
+        if dynamic_ownership is False:
+            vars_path = None
+            if vmxml.os.xmltreefile.find('nvram') is not None:
+                vars_path = vmxml.os.nvram
+            elif vmxml.os.fetch_attrs().get('os_firmware') == 'efi':
+                vars_path = params.get('vars_path')
+
+            if vars_path is not None and os.path.exists(vars_path):
+                if qemu_user.isdigit():
+                    uid, gid = int(qemu_user), int(qemu_group)
+                else:
+                    user_info = pwd.getpwnam(qemu_user)
+                    uid, gid = user_info.pw_uid, user_info.pw_gid
+                os.chown(vars_path, uid, gid)
 
         # Start VM to check the qemu process and image.
         try:
@@ -267,8 +307,8 @@ def run(test, params, env):
                                           "=%s" % disk_context +
                                           ", sec_label_trans=%s."
                                           % sec_label_trans)
-            elif(set_qemu_conf and not security_default_confined and not
-                 qemu_no_usr_grp):
+            elif (set_qemu_conf and not security_default_confined and not
+                  qemu_no_usr_grp):
                 if vm_context != qemu_conf_label_trans:
                     test.fail("Label of VM process is not expected"
                               " after starting.\nDetail: vm_context="
@@ -354,6 +394,7 @@ def run(test, params, env):
                               "error: %s" % e)
     finally:
         # clean up
+        vm.destroy(gracefully=False)
         for path, label in list(backup_labels_of_disks.items()):
             label_list = label.split(":")
             os.chown(path, int(label_list[0]), int(label_list[1]))
@@ -371,4 +412,9 @@ def run(test, params, env):
         if create_qemu_user:
             cmd = "userdel -r vdsm_fake"
             output = process.run(cmd, ignore_status=True, shell=True)
+        if vmxml.devices.by_device_tag('tpm') is not None:
+            if os.path.isfile('/tmp/permis.facl'):
+                cmd = "setfacl --restore=/tmp/permis.facl"
+                process.run(cmd, ignore_status=True, shell=True)
+                os.unlink('/tmp/permis.facl')
         utils_selinux.set_status(backup_sestatus)

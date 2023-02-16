@@ -1,5 +1,5 @@
 import os
-import logging
+import logging as log
 import re
 
 from avocado.utils import download
@@ -15,6 +15,11 @@ from virttest import libvirt_version
 from virttest.libvirt_xml import vm_xml
 from virttest.utils_test import libvirt
 from virttest.utils_libvirt import libvirt_config
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -65,6 +70,7 @@ def run(test, params, env):
                     'model': iface_model,
                     'del_addr': True,
                     'source': '{"network": "default"}'}
+    set_crypto_policy = params.get("set_crypto_policy")
 
     check_memballoon = "yes" == params.get("check_memballoon")
     membal_model = params.get("membal_model")
@@ -130,6 +136,18 @@ def run(test, params, env):
                 libvirt.modify_vm_iface(vm_name, "update_iface", iface_dict)
             if not check_disk:
                 params["disk_model"] = "virtio-transitional"
+        if 'rhel6' in params.get("shortname"):
+            vmxml = vm_xml.VMXML.new_from_inactive_dumpxml(vm_name)
+            os_xml = vmxml.os
+            if os_xml.fetch_attrs().get('os_firmware') == 'efi':
+                os_xml.del_os_firmware()
+            os_xml.del_nvram()
+            os_xml.del_loader()
+            vmxml.os = os_xml
+            vmxml.xmltreefile.write()
+            vmxml.sync("--nvram")
+        if set_crypto_policy:
+            utils_conn.update_crypto_policy(set_crypto_policy)
 
         if check_interface:
             libvirt.modify_vm_iface(vm_name, "update_iface", iface_params)
@@ -250,3 +268,5 @@ def run(test, params, env):
         libvirt.delete_local_disk("file", path=source_file)
         if guest_src_url and blk_source:
             libvirt.delete_local_disk("file", path=blk_source)
+        if set_crypto_policy:
+            utils_conn.update_crypto_policy()

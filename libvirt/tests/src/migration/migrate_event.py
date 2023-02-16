@@ -1,4 +1,6 @@
-import logging
+import aexpect
+
+import logging as log
 
 from virttest import libvirt_vm
 from virttest import migration
@@ -7,6 +9,11 @@ from virttest.libvirt_xml import vm_xml
 from virttest.utils_test import libvirt
 
 from provider.migration import migration_base
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -71,20 +78,21 @@ def run(test, params, env):
         virsh_session, remote_virsh_session = migration_base.monitor_event(params)
 
         # Execute migration process
-        migration_base.do_migration(vm, migration_test, None, dest_uri,
-                                    options, virsh_options, extra,
-                                    action_during_mig,
-                                    extra_args)
+        do_mig_param = {"vm": vm, "mig_test": migration_test, "src_uri": None, "dest_uri": dest_uri,
+                        "options": options, "virsh_options": virsh_options, "extra": extra,
+                        "action_during_mig": action_during_mig, "extra_args": extra_args}
+        migration_base.do_migration(do_mig_param)
 
         func_returns = dict(migration_test.func_ret)
         migration_test.func_ret.clear()
         logging.debug("Migration returns function results:%s", func_returns)
+        aexpect.kill_tail_threads()
 
         # Check event output
         migration_base.check_event_output(params, test, virsh_session, remote_virsh_session)
 
         if int(migration_test.ret.exit_status) == 0:
-            migration_test.post_migration_check([vm], params, uri=dest_uri)
+            migration_test.post_migration_check([vm], params, dest_uri=dest_uri)
     finally:
         logging.info("Recover test environment")
         vm.connect_uri = bk_uri

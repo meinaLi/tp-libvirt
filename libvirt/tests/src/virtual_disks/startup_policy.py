@@ -1,6 +1,6 @@
 import os
 import re
-import logging
+import logging as log
 import shutil
 
 import aexpect
@@ -18,6 +18,11 @@ from virttest.libvirt_xml import pool_xml
 from virttest.xml_utils import XMLTreeFile
 
 from virttest import libvirt_version
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -396,9 +401,10 @@ def run(test, params, env):
                 shutil.copyfile(disk_xml_file, disk_xml_policy_file)
             result = virsh.attach_device(domainarg=vm_name, filearg=disk_xml_file,
                                          flagstr="--config", **virsh_dargs)
-            # For iSCSI pool volume,startupPolicy attribute is not valid for it.
+            # For iSCSI pool volume and libvirt version < 8.0.0, startupPolicy attribute is not valid for it.
             # Moreover,setting disk 'requisite' is allowed only for cdrom or floppy.
-            if pool_type == "iscsi" or all([device_type == "disk", startup_policy == "requisite"]):
+            if (pool_type == "iscsi" and not libvirt_version.version_compare(8, 0, 0)) \
+               or all([device_type == "disk", startup_policy == "requisite"]):
                 libvirt.check_exit_status(result, expect_error=True)
                 return
             else:
@@ -462,6 +468,11 @@ def run(test, params, env):
             cmd_result = virsh.pool_refresh(pool_name)
             libvirt.check_exit_status(cmd_result)
             result = virsh.start(vm_name, **virsh_dargs)
+            # Allows block volumes to use startup policy since libvirt
+            # version 8.0.0
+            if pool_type == "iscsi" and libvirt_version.version_compare(8, 0, 0):
+                start_error = False
+                restore_error = False
             libvirt.check_exit_status(result, expect_error=start_error)
 
             # Step 3 Move back the source file and start.

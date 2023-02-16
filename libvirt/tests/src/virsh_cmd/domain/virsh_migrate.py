@@ -1,4 +1,4 @@
-import logging
+import logging as log
 import os
 import re
 import time
@@ -27,6 +27,11 @@ from virttest.utils_libvirt import libvirt_config
 from virttest import test_setup
 from virttest.staging import utils_memory
 from virttest.libvirt_xml.xcepts import LibvirtXMLNotFoundError
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -82,7 +87,7 @@ def run(test, params, env):
                 vm.destroy(gracefully=False)
 
                 if vm.is_persistent():
-                    vm.undefine()
+                    vm.undefine(options='--nvram')
 
         except Exception as detail:
             logging.error("Cleaning up destination failed.\n%s", detail)
@@ -382,7 +387,7 @@ def run(test, params, env):
             vcpu_list = guest_xml.vcpus.vcpu
             enabled_cpus_count = 0
             for each_vcpu in vcpu_list:
-                if(str(each_vcpu["enabled"]).strip().lower() == "yes"):
+                if (str(each_vcpu["enabled"]).strip().lower() == "yes"):
                     enabled_cpus_count += 1
             logging.debug("%s CPUs - %s", operation, cpu_count)
             logging.debug("CPUs present in guest xml- %s", enabled_cpus_count)
@@ -588,10 +593,13 @@ def run(test, params, env):
         graphic.autoport = graphics_autoport
     if graphics_listen:
         graphic.listen = graphics_listen
+    listen_attrs = {}
     if graphics_listen_type:
-        graphic.listen_type = graphics_listen_type
+        listen_attrs['type'] = graphics_listen_type
     if graphics_listen_addr:
-        graphic.listen_addr = graphics_listen_addr
+        listen_attrs['addr'] = graphics_listen_addr
+    if listen_attrs:
+        graphic.listen_attrs = listen_attrs
 
     vm_ref = params.get("vm_ref", vm.name)
     delay = int(params.get("virsh_migrate_delay", 10))
@@ -763,7 +771,7 @@ def run(test, params, env):
         # configure Maxmem in guest xml for memory hotplug to work
         try:
             vm_max_mem_rt = int(vmxml_backup.max_mem_rt)
-            if(vm_max_mem_rt <= vm_max_mem_rt_limit):
+            if (vm_max_mem_rt <= vm_max_mem_rt_limit):
                 vmxml_backup.max_mem_rt = (vm_max_mem_rt_limit +
                                            vm_max_mem)
                 vmxml_backup.max_mem_rt_slots = vm_max_dimm_slots
@@ -781,7 +789,7 @@ def run(test, params, env):
         logging.debug("Hotplug count = %d", mem_hotplug_count)
         logging.debug("Current mem = %d", vm_current_mem)
         logging.debug("VM maxmem = %d", vm_max_mem_rt)
-        if((vm_current_mem + vm_hotplug_mem) > vm_max_mem_rt):
+        if ((vm_current_mem + vm_hotplug_mem) > vm_max_mem_rt):
             test.cancel("Cannot hotplug memory more than max dimm slots "
                         "supported")
         if mem_hotplug_count > vm_max_dimm_slots:
@@ -817,6 +825,7 @@ def run(test, params, env):
     remove_dict = {}
     remote_libvirt_file = None
     src_libvirt_file = None
+    scsi_disk = None
 
     try:
         # Change the disk of the vm to shared disk
@@ -894,14 +903,7 @@ def run(test, params, env):
                                                    host_hp_size=host_hp_size,
                                                    pin=True)
                 vmxml_mem = vm_xml.VMMemBackingXML()
-                vmxml_hp = vm_xml.VMHugepagesXML()
-                pagexml_list = []
-                for page in range(len(HP_page_list)):
-                    pagexml = vmxml_hp.PageXML()
-                    pagexml.update(HP_page_list[page])
-                    pagexml_list.append(pagexml)
-                vmxml_hp.pages = pagexml_list
-                vmxml_mem.hugepages = vmxml_hp
+                vmxml_mem.setup_attrs(hugepages={'pages': HP_page_list})
                 vmxml.mb = vmxml_mem
             vmxml.sync()
 
@@ -1131,6 +1133,8 @@ def run(test, params, env):
         dest_state = params.get("virsh_migrate_dest_state", "running")
         if ret_migrate and dest_state == "running":
             if (not options.count("dname") and not extra.count("dname")):
+                if vm.serial_console is None:
+                    vm.create_serial_console()
                 # Check VM uptime after migrating to destination
                 migrated_vm_uptime = vm.uptime(connect_uri=dest_uri)
                 logging.info("Check VM uptime in destination after "
@@ -1350,7 +1354,7 @@ def run(test, params, env):
         # Simple sync cannot be used here, because the vm may not exists and
         # it cause the sync to fail during the internal backup.
         vm.destroy()
-        vm.undefine()
+        vm.undefine(options='--nvram')
         orig_config_xml.define()
 
         if src_libvirt_file:

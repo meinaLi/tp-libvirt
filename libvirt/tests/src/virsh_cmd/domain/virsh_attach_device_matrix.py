@@ -1,12 +1,18 @@
 import os
+import shutil
 import time
-import logging
+import logging as log
 from avocado.core import exceptions
 from virttest import virsh
 from virttest import data_dir
 from virttest import utils_misc
 from virttest.libvirt_xml import vm_xml
 from virttest.utils_test import libvirt
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -188,7 +194,7 @@ def run(test, params, env):
             raise exceptions.TestSkipError("Can't pause the domain")
     elif pre_vm_state == "transient":
         logging.info("Creating %s..." % vm_name)
-        vm.undefine()
+        virsh.undefine(vm_name, '--nvram', ignore_status=False)
         if virsh.create(backup_xml.xml, **virsh_dargs).exit_status:
             backup_xml.define()
             raise exceptions.TestSkipError("Can't create the domain")
@@ -225,6 +231,10 @@ def run(test, params, env):
                        'driver_type': "raw"}
         disk_xml = libvirt.create_disk_xml(disk_params)
 
+        # Copy disk xml for virsh.detach in the following code
+        new_xml_path = os.path.join(data_dir.get_tmp_dir(), "disk_copy.xml")
+        shutil.copyfile(disk_xml, new_xml_path)
+
         # Attach the disk.
         ret = virsh.attach_device(vm_ref, disk_xml,
                                   flagstr=at_options, debug=True)
@@ -245,8 +255,7 @@ def run(test, params, env):
         if pre_vm_state == "paused":
             if not vm.pause():
                 raise exceptions.TestFail("Can't pause the domain")
-        disk_xml = libvirt.create_disk_xml(disk_params)
-        ret = virsh.detach_device(vm_ref, disk_xml,
+        ret = virsh.detach_device(vm_ref, new_xml_path,
                                   flagstr=dt_options, debug=True)
         libvirt.check_exit_status(ret, dt_status_error)
 

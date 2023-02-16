@@ -12,6 +12,7 @@ aexpect
 afeter
 aggregater
 agregators
+alignsize
 amd
 analyse
 Analyse
@@ -112,6 +113,8 @@ chipset
 chmod
 chnaged
 chown
+chpid
+chpids
 chronyc
 Chunfu
 chwen
@@ -165,6 +168,8 @@ dac
 DAC
 darget
 dargs
+dasd
+dasda
 datetime
 DAX
 dbus
@@ -172,6 +177,7 @@ de
 deduplicate
 del
 deplist
+deps
 desc
 dest
 desturi
@@ -183,6 +189,7 @@ dev's
 devs
 df
 dhcp
+dhcp-client
 diag
 dict's
 dicts
@@ -222,6 +229,7 @@ domfsthaw
 domfstrim
 domid
 domif
+domifaddr
 domiflist
 domifstat
 domiftune
@@ -245,6 +253,7 @@ dst
 du
 dumpxml
 ebtables
+efi
 eg
 els
 embeddedqemu
@@ -270,6 +279,7 @@ failover
 fallocate
 fc
 fd
+fdasd
 fdisk
 fds
 fdset
@@ -463,6 +473,7 @@ keyvalue
 keywards
 keywrap
 KiB
+kickstart
 kms
 ksm
 KSM
@@ -528,6 +539,7 @@ LXC
 lzop
 macvlan
 macvtap
+makefs
 Makesure
 managedsave
 Managedsave
@@ -549,6 +561,8 @@ mcast
 MCS
 md
 mdev
+mdevctl
+mellanox
 mem
 memballoon
 memhog
@@ -666,6 +680,7 @@ numanode
 numastat
 numatune
 nvdimm
+nvme
 nvram
 nwfilter
 objs
@@ -685,6 +700,7 @@ outrange
 overcommit
 overcommits
 ovf
+ovmf
 ovirt
 ovs
 OVS
@@ -720,6 +736,7 @@ pkgs
 pki
 pkipath
 plaintext
+pmem
 pmsuspend
 pmsuspended
 polkit
@@ -815,6 +832,7 @@ rhv
 RHV
 rng
 RNG
+RSA
 rom
 rootfs
 rrunner
@@ -833,8 +851,10 @@ sasl
 sata
 scenaries
 schedinfo
+schid
 scp
 scsi
+schid
 sd
 sda
 sdb
@@ -1005,6 +1025,7 @@ umask
 umount
 umounted
 un
+unassign
 unbridge
 Unbridge
 Unclassifed
@@ -1032,6 +1053,7 @@ unprotect
 Unprotect
 Unregister
 unresettable
+Unsets
 untar
 upadte
 Updae
@@ -1106,6 +1128,7 @@ virtiofsd
 virtlogd
 virtnet
 virtproxyd
+virtqemud
 virttype
 virtualizati
 virtualization
@@ -1164,6 +1187,8 @@ xmlfile
 xmls
 xmltreefile
 xorg
+XPath
+xpath
 xxxx
 xxxxx
 xyz
@@ -1175,3 +1200,5 @@ Zhang
 stressapptest
 calc
 domdirtyrate
+hwrng
+buitin

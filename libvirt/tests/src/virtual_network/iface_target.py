@@ -1,8 +1,11 @@
-import logging
+import logging as log
+import os
+import shutil
 import time
 
 from avocado.utils import process
 
+from virttest import data_dir
 from virttest import libvirt_version
 from virttest import utils_libvirtd
 from virttest import utils_net
@@ -11,6 +14,11 @@ from virttest.libvirt_xml import vm_xml
 from virttest.utils_libvirt import libvirt_vmxml
 from virttest.utils_libvirt import libvirt_network
 from virttest.utils_test import libvirt
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -145,7 +153,8 @@ def run(test, params, env):
         if_dict = prepare_iface_dict(test_macvtap)
         mac_addr = utils_net.generate_mac_address_simple()
         if_dict['mac'] = mac_addr
-        iface_add_xml = libvirt.modify_vm_iface(vm_name, 'get_xml', if_dict)
+        iface_add_xml = os.path.join(data_dir.get_data_dir(), "iface_add.xml")
+        shutil.copyfile(libvirt.modify_vm_iface(vm_name, 'get_xml', if_dict), iface_add_xml)
         virsh.attach_device(vm_name, iface_add_xml, debug=True, ignore_status=False)
         time.sleep(2)
         logging.debug("3. Check tap name after hotplug an interface:")
@@ -170,4 +179,6 @@ def run(test, params, env):
     finally:
         if vm.is_alive():
             vm.destroy(gracefully=False)
+        if "iface_add_xml" in locals():
+            os.remove(iface_add_xml)
         vmxml_backup.sync()

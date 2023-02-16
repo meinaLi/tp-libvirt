@@ -1,6 +1,6 @@
 import os
 import re
-import logging
+import logging as log
 
 from avocado.utils import download
 
@@ -13,6 +13,11 @@ from virttest.libvirt_xml import vm_xml
 from virttest.utils_test import libvirt
 
 from src.virtio_transitional import virtio_transitional_base
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -81,6 +86,8 @@ def run(test, params, env):
             # rhel6 guest to make it works for login
             iface_params = {'model': 'virtio-transitional'}
             libvirt.modify_vm_iface(vm_name, "update_iface", iface_params)
+            # Remove nvram for rhel6 guest
+            virtio_transitional_base.remove_rhel6_nvram(vm_name)
         libvirt.set_vm_disk(vm, params)
         if hotplug:
             file_arg = vsock_xml.xml

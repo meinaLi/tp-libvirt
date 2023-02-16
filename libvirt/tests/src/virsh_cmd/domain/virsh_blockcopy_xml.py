@@ -1,5 +1,5 @@
 import os
-import logging
+import logging as log
 import socket
 from avocado.utils import process
 
@@ -9,13 +9,18 @@ from virttest import virsh
 from virttest import utils_package
 from virttest import ceph
 from virttest import utils_disk
-from virttest import utils_secret
 
+from virttest.utils_libvirt import libvirt_secret
 from virttest.utils_test import libvirt
 from virttest.utils_nbd import NbdExport
 
 from virttest.libvirt_xml import vm_xml, xcepts
 from virttest.libvirt_xml.devices.disk import Disk
+
+
+# Using as lower capital is not the best way to do, but this is just a
+# workaround to avoid changing the entire file.
+logging = log.getLogger('avocado.' + __name__)
 
 
 def run(test, params, env):
@@ -94,7 +99,7 @@ def run(test, params, env):
     disks_img = []
     try:
         # Clean up dirty secrets in test environments if there are.
-        utils_secret.clean_up_secrets()
+        libvirt_secret.clean_up_secrets()
         # Setup backend storage
         if backend_storage_type == "file":
             image_filename = params.get("image_filename", "raw.img")
