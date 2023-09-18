@@ -1,6 +1,9 @@
 import os
 import time
 
+from six import itervalues
+
+from virttest import data_dir
 from virttest import migration
 from virttest import libvirt_remote
 from virttest import libvirt_vm
@@ -9,7 +12,10 @@ from virttest import utils_config
 from virttest import utils_conn
 from virttest import utils_libvirtd
 from virttest import utils_iptables
+from virttest import utils_misc
 
+from virttest.utils_libvirt import libvirt_disk
+from virttest.utils_libvirt import libvirt_vmxml
 from virttest.utils_test import libvirt
 from virttest.libvirt_xml import vm_xml
 
@@ -58,15 +64,31 @@ class MigrationBase(object):
 
         """
         set_remote_libvirtd_log = "yes" == self.params.get("set_remote_libvirtd_log", "no")
+        start_vm = self.params.get("start_vm", "yes")
+        nfs_mount_dir = self.params.get("nfs_mount_dir")
 
         self.test.log.info("Setup steps by default.")
         if set_remote_libvirtd_log:
             self.set_remote_log()
 
-        libvirt.set_vm_disk(self.vm, self.params)
-        if not self.vm.is_alive():
+        if nfs_mount_dir:
+            disk_dict = {'source': {'attrs': {'file': os.path.join(nfs_mount_dir,
+                         os.path.basename(self.vm.get_first_disk_devices()['source']))}}}
+        else:
+            default_image_path = os.path.join(data_dir.get_data_dir(), 'images')
+            disk_dict = {'source': {'attrs': {'file': os.path.join(default_image_path,
+                         os.path.basename(self.vm.get_first_disk_devices()['source']))}}}
+
+        libvirt_vmxml.modify_vm_device(
+                vm_xml.VMXML.new_from_inactive_dumpxml(self.vm.name),
+                'disk', disk_dict)
+
+        if start_vm == "no" and self.vm.is_alive():
+            self.vm.destroy()
+
+        if start_vm == "yes" and not self.vm.is_alive():
             self.vm.start()
-        self.vm.wait_for_login().close()
+            self.vm.wait_for_login().close()
 
     def run_migration(self):
         """
@@ -88,9 +110,12 @@ class MigrationBase(object):
         do_migration_during_mig = "yes" == self.params.get("do_migration_during_mig", "no")
         initiating_bandwidth = self.params.get("initiating_bandwidth")
         second_bandwidth = self.params.get("second_bandwidth")
+        copy_storage_option = self.params.get("copy_storage_option")
 
         if postcopy_options:
             extra = "%s %s" % (extra, postcopy_options)
+        if copy_storage_option:
+            extra = "%s %s" % (extra, copy_storage_option)
 
         if check_vm_conn_before_migration:
             # Check local guest network connection before migration
@@ -165,8 +190,12 @@ class MigrationBase(object):
         extra_args = self.migration_test.update_virsh_migrate_extra_args(self.params)
         postcopy_resume_migration = "yes" == self.params.get("postcopy_resume_migration", "no")
         postcopy_options = self.params.get("postcopy_options")
+        copy_storage_option = self.params.get("copy_storage_option")
+
         if postcopy_options:
             extra = "%s %s" % (extra, postcopy_options)
+        if copy_storage_option:
+            extra = "%s %s" % (extra, copy_storage_option)
 
         if not postcopy_resume_migration:
             if not self.vm.is_alive():
@@ -181,6 +210,8 @@ class MigrationBase(object):
             extra_args['err_msg'] = err_msg_again
         if self.params.get("virsh_migrate_extra_mig_again"):
             extra = self.params.get("virsh_migrate_extra_mig_again")
+            if copy_storage_option:
+                extra = "%s %s" % (extra, copy_storage_option)
 
         mode = 'both' if postcopy_options else 'precopy'
         if migrate_speed_again:
@@ -399,3 +430,46 @@ def recreate_conn_objs(params):
     migration_base.cleanup_conn_obj(migration_obj.conn_list, migration_obj.test)
     migration_obj.conn_list.append(migration_base.setup_conn_obj(transport_type, params, migration_obj.test))
     time.sleep(3)
+
+
+def prepare_disks_remote(params, vm):
+    """
+    Prepare disks on target host
+
+    :param params: dict, get server ip, server user and server password
+    :param vm: vm object
+    """
+    server_ip = params.get("server_ip")
+    server_user = params.get("server_user")
+    server_pwd = params.get("server_pwd")
+
+    remote_session = remote.remote_login("ssh", server_ip, "22",
+                                         server_user, server_pwd,
+                                         r'[$#%]')
+
+    all_vm_disks = vm.get_blk_devices()
+    for disk in list(itervalues(all_vm_disks)):
+        disk_type = disk.get("type")
+        disk_path = disk.get("source")
+        image_info = utils_misc.get_image_info(disk_path)
+        disk_size = image_info.get("vsize")
+        disk_format = image_info.get("format")
+        utils_misc.make_dirs(os.path.dirname(disk_path), remote_session)
+        libvirt_disk.create_disk(disk_type, path=disk_path,
+                                 size=disk_size, disk_format=disk_format,
+                                 session=remote_session)
+    remote_session.close()
+
+
+def cleanup_disks_remote(params, vm):
+    """
+    Cleanup disks on target host
+
+    :param params: Dictionary with the test parameters
+    :param vm: vm object
+    """
+    all_vm_disks = vm.get_blk_devices()
+    for disk in list(itervalues(all_vm_disks)):
+        disk_path = disk.get("source")
+        cmd = "rm -f %s" % disk_path
+        remote.run_remote_cmd(cmd, params, ignore_status=False)

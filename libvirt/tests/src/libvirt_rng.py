@@ -161,6 +161,7 @@ def run(test, params, env):
                                           "").split()
         backend_protocol = dparams.get("backend_protocol")
         rng_alias = dparams.get("rng_alias")
+        device_address = dparams.get("address")
         vmxml = vm_xml.VMXML.new_from_dumpxml(vm_name)
         rng_xml = rng.Rng()
         rng_xml.rng_model = rng_model
@@ -183,6 +184,8 @@ def run(test, params, env):
             rng_xml.alias = dict(name=rng_alias)
         if with_packed:
             rng_xml.driver = dict(packed=driver_packed)
+        if device_address:
+            rng_xml.address = rng_xml.new_rng_address(**{"attrs": ast.literal_eval(device_address)})
 
         logging.debug("Rng xml: %s", rng_xml)
         if get_xml:
@@ -417,24 +420,23 @@ def run(test, params, env):
                           " the limitation of configuration")
         if device_num > 1:
             rng_dev = rng_avail.split()
-            compare_device_numbers(rng_dev)
+            compare_device_numbers(ignored_devices, rng_dev, device_num)
             session.cmd("echo -n %s > %s" % (rng_dev[1], rng_files[1]))
             # Read the random device
             if session.cmd_status(cmd, timeout=timeout):
                 test.fail("Failed to read the random device")
 
-    def compare_device_numbers(rng_dev):
+    def compare_device_numbers(ignored_devices, rng_dev, device_num):
         """
         Compares number of entries in rng_dev list, while doing some cleanup
         of said entries.
 
+        :param ignored_devices: List of devices that should be ignored
         :param rng_dev: List of names of RNG devices
+        :param device_num: The expected number of listed devices
         """
-        if vm_xml.VMXML.get_devices("tpm"):
-            rng_dev.remove("tpm-rng-0")
-        if "trng" in rng_dev:
-            rng_dev.remove("trng")
-        if len(rng_dev) != device_num:
+        filtered_rng_dev = [x for x in rng_dev if x not in ignored_devices]
+        if len(filtered_rng_dev) != device_num:
             test.fail("Number of rng devices defined and available does not match.\n"
                       "Rng devices: %s\n"
                       "Number of devices: %i" % (rng_dev, device_num))
@@ -481,11 +483,22 @@ def run(test, params, env):
                 finally:
                     sock.close()
 
+    def rotate_audit_log():
+        """
+        Rotates the audit log so that the current log only contains
+        entries that were written during the test execution
+        """
+        process.run("systemctl kill --signal SIGUSR1 auditd")
+
     start_error = "yes" == params.get("start_error", "no")
+    expected_create_error = params.get("expected_create_error", "")
     status_error = "yes" == params.get("status_error", "no")
 
     test_host = "yes" == params.get("test_host", "no")
     test_guest = "yes" == params.get("test_guest", "no")
+    test_audit = "yes" == params.get("test_audit", "no")
+    audit_log_file = params.get("audit_log_file", "/var/log/audit/audit.log")
+    expected_audit_message = params.get("expected_audit_message", "VIRT_RESOURCE")
     set_virtio_current = "yes" == params.get("set_virtio_current", "no")
     test_guest_dump = "yes" == params.get("test_guest_dump", "no")
     test_qemu_cmd = "yes" == params.get("test_qemu_cmd", "no")
@@ -495,6 +508,7 @@ def run(test, params, env):
     snapshot_with_rng = "yes" == params.get("snapshot_with_rng", "no")
     snapshot_name = params.get("snapshot_name")
     device_num = int(params.get("device_num", 1))
+    ignored_devices = params.get("ignored_devices", "").split(",")
     detach_alias = "yes" == params.get("rng_detach_alias", "no")
     detach_alias_options = params.get("rng_detach_alias_options")
     attach_rng = "yes" == params.get("rng_attach_device", "no")
@@ -548,6 +562,9 @@ def run(test, params, env):
         bgjob = None
         bgjob2 = None
 
+        if test_audit:
+            rotate_audit_log()
+
         # Prepare xml, make sure no extra rng dev.
         vmxml = vmxml_backup.copy()
         vmxml.remove_all_device_by_type('rng')
@@ -566,53 +583,53 @@ def run(test, params, env):
         if vm.is_alive():
             vm.destroy(gracefully=False)
 
-        # Build vm xml.
-        dparams = {}
-        if device_num > 1:
-            for i in xrange(device_num):
-                rng_model = params.get("rng_model_%s" % i, "virtio")
-                dparams[i] = {"rng_model": rng_model}
-                dparams[i].update({"backend_model": params.get(
-                    "backend_model_%s" % i, "random")})
-                dparams[i].update({"rng_device": get_rng_device(
-                    guest_arch, rng_model)})
-                bk_type = params.get("backend_type_%s" % i)
-                if bk_type:
-                    dparams[i].update({"backend_type": bk_type})
-                bk_dev = params.get("backend_dev_%s" % i)
-                if bk_dev:
-                    dparams[i].update({"backend_dev": bk_dev})
-                bk_src = params.get("backend_source_%s" % i)
-                if bk_src:
-                    dparams[i].update({"backend_source": bk_src})
-                bk_pro = params.get("backend_protocol_%s" % i)
-                if bk_pro:
-                    dparams[i].update({"backend_protocol": bk_pro})
-                modify_rng_xml(dparams[i], False)
-        else:
-            params.update({"rng_device": get_rng_device(
-                guest_arch, params.get("rng_model", "virtio"))})
-
-            if detach_alias:
-                device_alias = "ua-" + str(uuid.uuid4())
-                params.update({"rng_alias": device_alias})
-
-            rng_xml = modify_rng_xml(params, not test_snapshot, attach_rng)
-
-            if urandom:
-                device_alias = "ua-" + str(uuid.uuid4())
-                params.update({"rng_alias": device_alias})
-                rng_xml = modify_rng_xml(params, False, True)
-                vmxml.add_device(rng_xml)
-                vmxml.sync()
-
         try:
+            # Build vm xml.
+            dparams = {}
+            if device_num > 1:
+                for i in xrange(device_num):
+                    rng_model = params.get("rng_model_%s" % i, "virtio")
+                    dparams[i] = {"rng_model": rng_model}
+                    dparams[i].update({"backend_model": params.get(
+                        "backend_model_%s" % i, "random")})
+                    dparams[i].update({"rng_device": get_rng_device(
+                        guest_arch, rng_model)})
+                    bk_type = params.get("backend_type_%s" % i)
+                    if bk_type:
+                        dparams[i].update({"backend_type": bk_type})
+                    bk_dev = params.get("backend_dev_%s" % i)
+                    if bk_dev:
+                        dparams[i].update({"backend_dev": bk_dev})
+                    bk_src = params.get("backend_source_%s" % i)
+                    if bk_src:
+                        dparams[i].update({"backend_source": bk_src})
+                    bk_pro = params.get("backend_protocol_%s" % i)
+                    if bk_pro:
+                        dparams[i].update({"backend_protocol": bk_pro})
+                    modify_rng_xml(dparams[i], False)
+            else:
+                params.update({"rng_device": get_rng_device(
+                    guest_arch, params.get("rng_model", "virtio"))})
+
+                if detach_alias:
+                    device_alias = "ua-" + str(uuid.uuid4())
+                    params.update({"rng_alias": device_alias})
+
+                rng_xml = modify_rng_xml(params, not test_snapshot, attach_rng)
+
+                if urandom:
+                    device_alias = "ua-" + str(uuid.uuid4())
+                    params.update({"rng_alias": device_alias})
+                    rng_xml = modify_rng_xml(params, False, True)
+                    vmxml.add_device(rng_xml)
+                    vmxml.sync()
+
             # Add tcp random server
             if random_source and params.get("backend_type") == "tcp" and not test_guest_dump:
                 cmd = "cat /dev/random | nc -4 -l localhost 1024"
                 bgjob = utils_misc.AsyncJob(cmd)
 
-            if all([guest_arch == 'x86_64', random_source, params.get("backend_type") == "udp", test_guest_dump]):
+            if all([random_source, params.get("backend_type") == "udp", test_guest_dump]):
                 if not utils_package.package_install("socat"):
                     test.error("Failed to install socat on host")
                 cmd1 = "cat /dev/urandom|nc -l 127.0.0.1 1235"
@@ -623,11 +640,6 @@ def run(test, params, env):
             vm.start()
             # Wait guest to enter boot stage
             time.sleep(3)
-
-            # Feed the tcp random device some data
-            if test_guest_dump and params.get("backend_type") == "tcp":
-                cmd = "cat /dev/random | nc -4 localhost 1024"
-                bgjob = utils_misc.AsyncJob(cmd)
 
             if attach_rng:
                 ret = virsh.attach_device(vm_name, rng_xml.xml,
@@ -644,6 +656,11 @@ def run(test, params, env):
                 if start_error:
                     test.fail("VM started unexpectedly")
 
+            # Feed the tcp random device some data
+            if test_guest_dump and params.get("backend_type") == "tcp":
+                cmd = "cat /dev/random | nc -4 localhost 1024"
+                bgjob = utils_misc.AsyncJob(cmd)
+
             # Add udp random server to feed aarch64 guest to speed up boot
             # https://bugzilla.redhat.com/show_bug.cgi?id=1983544
             if guest_arch == 'aarch64' and params.get("backend_type") == "udp":
@@ -657,6 +674,9 @@ def run(test, params, env):
                     check_qemu_cmd(params)
             if test_host:
                 check_host()
+            if test_audit:
+                libvirt.check_logfile(expected_audit_message,
+                                      audit_log_file)
             session = vm.wait_for_login()
             if test_guest:
                 check_guest(session, set_virtio_current=set_virtio_current)
@@ -708,6 +728,11 @@ def run(test, params, env):
                           'please refer to https://bugzilla.'
                           'redhat.com/show_bug.cgi?id=1220252:'
                           '\n%s' % details)
+        except xcepts.LibvirtXMLError as details:
+            logging.info(str(details))
+            if expected_create_error not in str(details):
+                test.fail("Didn't find expected error:"
+                          " %s" % expected_create_error)
     finally:
         # Delete snapshots.
         snapshot_lists = virsh.snapshot_list(vm_name, debug=True)

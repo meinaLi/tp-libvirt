@@ -1,5 +1,4 @@
 import os
-import re
 import uuid
 import logging as log
 
@@ -9,6 +8,7 @@ from virttest import utils_misc
 from virttest.libvirt_xml import vm_xml
 from virttest.libvirt_xml.devices.disk import Disk
 from virttest.libvirt_xml.devices.watchdog import Watchdog
+from virttest.libvirt_xml.devices.input import Input
 from virttest.utils_test import libvirt
 from virttest.utils_disk import get_scsi_info
 from virttest.utils_libvirt import libvirt_vmxml
@@ -39,12 +39,15 @@ def run(test, params, env):
     hostdev_type = params.get("detach_hostdev_type", "")
     hostdev_managed = params.get("detach_hostdev_managed")
     controller_dict = eval(params.get('controller_dict', '{}'))
+    pci_filter = params.get("pci_filter", "")
     # controller params
     contr_type = params.get("detach_controller_type")
     contr_model = params.get("detach_controller_mode")
     # redirdev params
     redir_type = params.get("detach_redirdev_type")
     redir_bus = params.get("detach_redirdev_bus")
+    redir_params = eval(params.get("redir_params", "{}"))
+    port = params.get("port")
     # channel params
     channel_type = params.get("detach_channel_type")
     channel_dict = eval(params.get("channel_dict", "{}"))
@@ -66,17 +69,42 @@ def run(test, params, env):
 
     device_alias = "ua-" + str(uuid.uuid4())
 
+    def check_device_by_alias(dev_type, dev_alias, expect_exist=True):
+        """
+        Check the device's availability in vm xml
+
+        :param dev_type: str, device type, like 'watchdog'
+        :param dev_alias: str, device alias
+        :param expect_exist: boolean, True if the device is expected to exist
+                            Otherwise, False
+        """
+        domxml = vm_xml.VMXML.new_from_dumpxml(vm_name, options=dump_option)
+        devices = domxml.get_devices(device_type=dev_type)
+        existed = True if devices else False
+        if existed:
+            found = False
+            for one_dev in devices:
+                try:
+                    if one_dev.fetch_attrs()['alias']['name'] == dev_alias:
+                        test.log.debug("Found the device with alias '%s'", dev_alias)
+                        found = True
+                        break
+                except KeyError as details:
+                    test.log.warning("No key is found: %s", details)
+            existed = True if found else False
+        return existed == expect_exist
+
     def check_detached_xml_noexist():
         """
         Check detached xml does not exist in the guest dumpxml
 
         :return: True if it does not exist, False if still exists
         """
-        domxml_dt = virsh.dumpxml(vm_name, dump_option).stdout_text.strip()
-        if detach_check_xml not in domxml_dt:
-            return True
+        if watchdog_type:
+            return check_device_by_alias('watchdog', device_alias, expect_exist=False)
         else:
-            return False
+            domxml_dt = virsh.dumpxml(vm_name, dump_option).stdout_text.strip()
+            return detach_check_xml not in domxml_dt
 
     def get_usb_info():
         """
@@ -90,6 +118,17 @@ def run(test, params, env):
             return result.stdout_text.rstrip(':')
         else:
             test.error("Can not get usb hub info for testing")
+
+    def start_usbredirserver():
+        """
+        Start usbredirserver
+
+        """
+        lsusb_list = process.run('lsusb').stdout_text.splitlines()
+        ps = process.SubProcess("usbredirserver -p {} {}".format
+                                (port, lsusb_list[0].split()[5]), shell=True)
+        server_id = ps.start()
+        return server_id
 
     # backup xml
     vmxml = vm_xml.VMXML.new_from_inactive_dumpxml(vm_name)
@@ -111,17 +150,18 @@ def run(test, params, env):
                                                        scsi_size="8")
                 pci_id = get_scsi_info(source_disk)
             elif hostdev_type == "pci":
+                cmd = "virsh capabilities | grep iommu | awk -F \"'\" '{print $2}'"
+                cmd_result = process.run(cmd, ignore_status=True, shell=True).stdout_text.strip()
+                support_iommu = "yes" == cmd_result
+                if not support_iommu:
+                    test.cancel("Host does not support iommu")
                 libvirt_vmxml.modify_vm_device(vmxml=vmxml,
                                                dev_type='controller',
-                                               dev_dict=controller_dict)
-                kernel_cmd = utils_misc.get_ker_cmd()
-                res = re.search("iommu=on", kernel_cmd)
-                if not res:
-                    test.error("iommu should be enabled in kernel "
-                               "cmd line - '%s'." % kernel_cmd)
+                                               dev_dict=controller_dict,
+                                               index=int(params.get("index")))
 
                 pci_id = utils_misc.get_full_pci_id(
-                    utils_misc.get_pci_id_using_filter('')[-1])
+                    utils_misc.get_pci_id_using_filter(pci_filter)[-1])
 
                 if not vm.is_alive():
                     vm.start()
@@ -145,7 +185,10 @@ def run(test, params, env):
         detach_check_xml = detach_check_xml % contr_index
 
     if redir_type:
-        device_xml = libvirt.create_redirdev_xml(redir_type, redir_bus, device_alias)
+        if redir_type == "tcp":
+            start_usbredirserver()
+        device_xml = libvirt.create_redirdev_xml(redir_type, redir_bus,
+                                                 device_alias, redir_params)
 
     if channel_type:
         channel_dict.update(
@@ -220,12 +263,15 @@ def run(test, params, env):
         attach_device = False
 
     if input_type:
+        vmxml.remove_all_device_by_type('input')
         input_dict.update({"alias": {"name": device_alias}})
         if input_type == "passthrough":
             event = process.run("ls /dev/input/event*", shell=True).stdout
             input_dict.update({"source_evdev": event.decode('utf-8').split()[0]})
-        libvirt_vmxml.modify_vm_device(vmxml, "input",
-                                       dev_dict=input_dict)
+
+        input_obj = Input(type_name=input_type)
+        input_obj.setup_attrs(**input_dict)
+        libvirt.add_vm_device(vmxml, input_obj)
 
         if not vm.is_alive():
             vm.start()
@@ -243,12 +289,19 @@ def run(test, params, env):
         # Attach xml to domain
         if attach_device:
             logging.info("Attach xml is %s" % process.run("cat %s" % device_xml.xml).stdout_text)
-            virsh.attach_device(vm_name, device_xml.xml, flagstr=detach_options,
-                                debug=True, ignore_status=False)
-
+            ignore_status = True if hostdev_type == 'pci' else False
+            ret = virsh.attach_device(vm_name, device_xml.xml, flagstr=detach_options,
+                                      debug=True, ignore_status=ignore_status)
+            if ret.exit_status and hostdev_type == 'pci':
+                test.cancel("The PCI device with xml '%s' does not support "
+                            "attaching to the vm with errors:\n%s" % (device_xml,
+                                                                      ret.stderr_text))
         domxml_at = virsh.dumpxml(vm_name, dump_option, debug=True).stdout.strip()
-        if detach_check_xml not in domxml_at:
-            test.error("Can not find %s in domxml after attach" % detach_check_xml)
+        if watchdog_type:
+            check_device_by_alias('watchdog', device_alias)
+        else:
+            if detach_check_xml not in domxml_at:
+                test.error("Can not find %s in domxml after attach" % detach_check_xml)
 
         # Detach xml with alias
         result = virsh.detach_device_alias(vm_name, device_alias, detach_options,
@@ -260,10 +313,12 @@ def run(test, params, env):
                                    60,
                                    step=2,
                                    text="Repeatedly search guest dumpxml with detached xml"):
-            test.fail("Still can find %s in domxml" % detach_check_xml)
+            test.fail("Still can find device with alias '%s' in domxml" % device_alias)
     finally:
         backup_xml.sync()
         if hostdev_type == "scsi":
             libvirt.delete_scsi_disk()
         if virtual_disk_type and os.path.exists(image_path):
             os.remove(image_path)
+        if 'server_id' in locals():
+            process.run("killall usbredirserver")

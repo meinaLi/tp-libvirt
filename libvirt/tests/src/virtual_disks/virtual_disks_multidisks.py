@@ -792,7 +792,7 @@ def run(test, params, env):
         pool_src_xml.device_path = iscsi_target
         poolxml = pool_xml.PoolXML(pool_type=pool_type)
         poolxml.name = pool_name
-        poolxml.set_source(pool_src_xml)
+        poolxml.source = pool_src_xml
         poolxml.target_path = "/dev/disk/by-path"
 
         # Create iSCSI pool.
@@ -1081,6 +1081,10 @@ def run(test, params, env):
             # Ignore errors here
             session.cmd("dracut --force --add-drivers '%s'"
                         % add_disk_driver, timeout=360)
+            # In terms of s390x, additional step is needed for normal guest
+            # boot, see https://bugzilla.redhat.com/show_bug.cgi?id=2214147
+            if arch == 's390x':
+                session.cmd("zipl")
         session.close()
         vm.shutdown()
 
@@ -1626,6 +1630,7 @@ def run(test, params, env):
                 if len(device_attach_error) > i:
                     disk_attach_error = "yes" == device_attach_error[i]
                 libvirt.check_exit_status(ret, disk_attach_error)
+                time.sleep(3)
             if attach_ccw_address_at_dt_disk:
                 attach_option = device_attach_option[0].replace('--live', '--config')
                 ret = virsh.attach_disk(vm_name, disks[0]["source"],

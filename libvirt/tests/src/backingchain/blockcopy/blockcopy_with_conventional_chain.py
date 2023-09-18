@@ -41,8 +41,8 @@ def run(test, params, env):
         Do blockcopy and abort job ,than check hash and vmxml chain
         """
         session = vm.wait_for_login()
-        expected_hash = test_obj.get_hash_value(session,
-                                                "/dev/" + test_obj.new_dev)
+        expected_hash, check_disk = test_obj.get_hash_value(session,
+                                                            "/dev/" + test_obj.new_dev)
 
         test.log.info("TEST_STEP1: Do blockcopy and abort job")
         virsh.blockcopy(vm_name, target_disk, tmp_copy_path,
@@ -53,7 +53,7 @@ def run(test, params, env):
         check_obj.check_mirror_exist(vm, target_disk, tmp_copy_path)
 
         if not utils_misc.wait_for(
-                lambda: libvirt.check_blockjob(vm_name, target_disk, "progress", "100"), 30):
+                lambda: libvirt.check_blockjob(vm_name, target_disk, "progress", "100(.00)?"), 30):
             test.fail("Blockcopy not finished for 30s")
         test.log.info("TEST_STEP3: Abort job with %s", execute_option)
         virsh.blockjob(vm_name, target_disk, execute_option,
@@ -64,7 +64,7 @@ def run(test, params, env):
         expected_chain = test_obj.convert_expected_chain(expected_chain_index)
         check_obj.check_backingchain_from_vmxml(disk_type, target_disk, expected_chain)
 
-        check_obj.check_hash_list(["/dev/" + test_obj.new_dev], [expected_hash],
+        check_obj.check_hash_list([check_disk], [expected_hash],
                                   session)
         session.close()
 

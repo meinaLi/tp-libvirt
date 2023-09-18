@@ -40,7 +40,7 @@ def run(test, params, env):
         2) Check cur value is changing.
         3) Execute with --pivot and check raw option return empty.
         """
-        if not libvirt.check_blockjob(vm_name, dev, "progress", "100"):
+        if not libvirt.check_blockjob(vm_name, dev, "progress", "100(.00)?"):
             _check_cur()
             _abort_job()
         else:
@@ -87,7 +87,7 @@ def run(test, params, env):
         test.log.info("Check if the job can be aborted successfully")
         if utils_misc.wait_for(
                 lambda: libvirt.check_blockjob(vm_name,
-                                               dev, "progress", "100"), 100):
+                                               dev, "progress", "100(.00)?"), 100):
             virsh.blockjob(vm_name, dev, options=' --pivot',
                            debug=True,
                            ignore_status=False)

@@ -1,5 +1,4 @@
 import logging as log
-import platform
 import random
 import re
 
@@ -75,7 +74,7 @@ def numa_mode_check(test, vm, mode_nodeset):
 
     :param test: test object
     :param vm: the vm object
-    :param mode_nodeset: the nodeset mode in the vm
+    :param mode_nodeset: the nodeset mode pattern in the vm
     :raises: test.fail if numa node and nodeset are not expected
     """
     vm_pid = vm.get_pid()
@@ -83,9 +82,11 @@ def numa_mode_check(test, vm, mode_nodeset):
     # Open a file
     with open(numa_map) as file:
         for line in file.readlines():
-            if line.split()[1] != mode_nodeset:
-                test.fail("numa node and nodeset %s is "
-                          "not expected" % mode_nodeset)
+            if not re.search(mode_nodeset, line):
+                test.fail("numa mode and nodeset is expected "
+                          "to be matched with '%s' "
+                          "in '%s', but not found" % (mode_nodeset,
+                                                      line))
 
 
 def mem_compare(test, used_node, left_node, memory_status):
@@ -144,7 +145,7 @@ def verify_numa_for_auto_replacement(test, params, vmxml, node_list, qemu_cpu, v
         if numa_memory.get('mode') == 'strict':
             mem_compare(test, numad_node_seq, left_node, memory_status=memory_status)
         elif numa_memory.get('mode') == 'preferred':
-            mode_nodeset = 'prefer:' + numad_ret
+            mode_nodeset = 'prefer\s*.*:' + numad_ret
             numa_mode_check(test, vm, mode_nodeset)
         else:
             mode_nodeset = numa_memory.get('mode') + ':' + numad_ret
@@ -184,21 +185,6 @@ def run(test, params, env):
         value = params.get(mem_param)
         if value:
             numa_memory[mem_param.split('_')[1]] = value
-    arch = platform.machine()
-    if 'ppc64' in arch:
-        try:
-            ppc_memory_nodeset = ""
-            nodes = numa_memory["nodeset"]
-            if '-' in nodes:
-                for nnode in range(int(nodes.split('-')[0]), int(nodes.split('-')[1]) + 1):
-                    ppc_memory_nodeset += str(node_list[nnode]) + ','
-            else:
-                node_lst = nodes.split(',')
-                for nnode in range(len(node_lst)):
-                    ppc_memory_nodeset += str(node_list[int(node_lst[nnode])]) + ','
-            numa_memory["nodeset"] = ppc_memory_nodeset[:-1]
-        except (KeyError, IndexError):
-            pass
 
     try:
         # Get host cpu list
@@ -332,7 +318,7 @@ def run(test, params, env):
                 used_node = [online_node_list.index(i) for i in used_node]
                 mem_compare(test, used_node, left_node, memory_status=memory_status)
             elif numa_memory.get('mode') == 'preferred':
-                mode_nodeset = 'prefer:' + numa_memory.get('nodeset')
+                mode_nodeset = 'prefer\s*.*:' + numa_memory.get('nodeset')
                 numa_mode_check(test, vm, mode_nodeset)
             else:
                 mode_nodeset = numa_memory.get('mode') + ':' + numa_memory.get('nodeset')

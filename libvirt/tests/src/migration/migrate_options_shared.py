@@ -399,6 +399,9 @@ def run(test, params, env):
         expected_list_after_mig_src[-2] = 'Total downtime'
         expected_list_after_mig_dest = copy.deepcopy(expected_list_after_mig_src)
 
+        if postcopy_options and libvirt_version.version_compare(9, 3, 0):
+            expected_list_during_mig.remove("Expected downtime")
+
         # Check version in remote
         if not expected_list_after_mig_dest.count("Postcopy requests"):
             remote_session = remote.remote_login("ssh", server_ip, "22", server_user,
@@ -533,10 +536,10 @@ def run(test, params, env):
                       .format(vm_stat.stdout))
 
         if not utils_misc.wait_for(
-           lambda: _check_dest_state(expected_remote_state), 5,
+           lambda: _check_dest_state(expected_remote_state), 10,
            text="check if dest vm state is %s" % expected_remote_state):
             test.fail("Unable to get expected domstate on destination machine "
-                      "in 5s!")
+                      "in 10s!")
 
         if postcopy_options:
             vm_stat = virsh.domstate(vm_name, ignore_status=False)
@@ -1391,6 +1394,11 @@ def run(test, params, env):
         remove_dict = {"do_search": '{"%s": "ssh:/"}' % dest_uri}
         src_libvirt_file = libvirt_config.remove_key_for_modular_daemon(
             remove_dict)
+
+        if extra.count("xbzrle") and extra.count("parallel"):
+            if libvirt_version.version_compare(9, 4, 0):
+                asynch_migration = False
+                params.update({"status_error": "yes"})
 
         # Execute migration process
         if not asynch_migration:

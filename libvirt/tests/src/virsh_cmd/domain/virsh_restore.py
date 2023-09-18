@@ -69,6 +69,7 @@ def run(test, params, env):
     vm_ref_uid = None
     vm_ref_gid = None
     qemu_conf = None
+    tmp_file = ""
 
     if unprivileged_user:
         if unprivileged_user.count('EXAMPLE'):
@@ -216,3 +217,5 @@ def run(test, params, env):
                 export_dir=params.get("export_dir"), rm_export_dir=False)
         if setup_iscsi:
             libvirt.setup_or_cleanup_iscsi(False)
+        if os.path.exists(tmp_file):
+            os.remove(tmp_file)

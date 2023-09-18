@@ -1,11 +1,14 @@
 import logging
 import os
 import random
+import re
 import string
+import aexpect
 
 from avocado.utils import linux_modules
 from avocado.utils import process
 
+from virttest import libvirt_version
 from virttest import virt_vm, utils_misc
 from virttest import virsh
 from virttest import utils_split_daemons
@@ -365,6 +368,131 @@ def create_block_lun_source_disk(params):
     return block_lun_source_disk
 
 
+def check_cdrom_reboot_reset(vm, params, test):
+    """
+    Check tray state can be updated after VM reboot or reset
+
+    :param vm: one object representing VM
+    :param params: wrapped parameters in dictionary format
+    :param test: test assert object
+    """
+    # reboot and reset VM
+    for virsh_function in [virsh.reboot, virsh.reset]:
+        session = vm.wait_for_login()
+        eject_cdrom_device_cmd = "eject /dev/sr0"
+        status, output = session.cmd_status_output(eject_cdrom_device_cmd)
+        if status:
+            test.fail("Failed to eject cdrom device in VM with error message:%s" % output)
+
+        def _get_tray_state():
+            """
+            Get tray state
+            """
+            cdrom_vmxml = vm_xml.VMXML.new_from_dumpxml(vm.name)
+            cdrom_devices = cdrom_vmxml.get_disk_all_by_expr('device==cdrom')
+            cdrom_xml = list(cdrom_devices.values())[0]
+            tray_state = cdrom_xml.find('target').get('tray')
+            LOG.debug("tray state value:\n %s", tray_state)
+
+            return tray_state
+
+        tray_state = _get_tray_state()
+        if tray_state != "open":
+            test.fail("Fail to eject guest cdrom, and expected tray state should be open, but actually: %s"
+                      % tray_state)
+
+        def _qemu_state():
+            """
+            Get qemu state
+            """
+            qemu_output = virsh.qemu_monitor_command(name=vm.name, cmd="info block", options='--hmp',
+                                                     **{'debug': True, 'ignore_status': True})
+            LOG.debug("qemu output:\n%s", qemu_output.stdout_text)
+            return qemu_output.stdout_text
+
+        tray_original_state_open = params.get("tray_original_state")
+        qemu_state = _qemu_state()
+        if tray_original_state_open not in qemu_state:
+            test.fail("Failed since tray state is open, but get state from qemu: %s" % qemu_state)
+
+        # start loop to wait for tray-change event
+        virsh_session = aexpect.ShellSession(virsh.VIRSH_EXEC, auto_close=True)
+        event_cmd = "event --domain %s --event tray-change --loop" % vm.name
+        virsh_session.sendline(event_cmd)
+
+        virsh_function(vm.name, ignore_status=False, debug=True)
+        vm.wait_for_login().close()
+        # check tray state again, should be closed, and value is None
+        tray_state_update = _get_tray_state()
+        if tray_state_update is not None:
+            test.fail("Failed since expected tray state is closed, but get state is: %s" % tray_state_update)
+        # check tray state from qemu
+        tray_reset_state = params.get("tray_reset_state")
+        qemu_state_update = _qemu_state()
+        if tray_reset_state not in qemu_state_update:
+            test.fail("Failed since expect tray state is closed, but from qemu is: %s" % qemu_state_update)
+
+        # check tray-change event
+        virsh_session.send_ctrl("^C")
+        ret_output = virsh_session.get_stripped_output().replace("\n", "").strip()
+        event_matched = r"event 'tray-change' for domain '%s' disk .*closed" % vm.name
+        if not re.search(event_matched, ret_output):
+            test.fail("Can not find matched event:%s from event output: %s" % (event_matched, ret_output))
+
+
+def check_scsi_cdrom_hot_eject(vm, params, test):
+    """
+    Check eject hotplug scsi cdrom
+
+    :param vm: one object representing VM
+    :param params: wrapped parameters in dictionary format
+    :param test: test assert object
+    """
+    # start loop to wait for tray-change event
+    virsh_session = aexpect.ShellSession(virsh.VIRSH_EXEC, auto_close=True)
+    event_cmd = "event --domain %s --event tray-change --loop" % vm.name
+    virsh_session.sendline(event_cmd)
+
+    device_target = params.get("target_dev")
+    virsh.change_media(vm.name, device_target, " --eject --live",
+                       ignore_status=False, debug=True)
+
+    vm.wait_for_login().close()
+    # Check cdrom has been changed with empty
+    check_source_in_cdrom_device(vm, None, test)
+
+    def _get_qemu_state():
+        """
+        Get qemu state
+        """
+        qemu_output = virsh.qemu_monitor_command(name=vm.name, cmd="info block", options='--hmp',
+                                                 **{'debug': True, 'ignore_status': True})
+        LOG.debug("qemu output:\n%s", qemu_output.stdout_text)
+        return qemu_output.stdout_text
+
+    tray_state_close = params.get("tray_state")
+    qemu_state = _get_qemu_state()
+    if tray_state_close not in qemu_state:
+        test.fail("Failed since tray state is close, but get state from qemu: %s" % qemu_state)
+
+    # check tray-change event
+    virsh_session.send_ctrl("^C")
+    ret_output = virsh_session.get_stripped_output().replace("\n", "").strip()
+
+    event_matched_opened = r"event 'tray-change' for domain '%s' disk .*opened" % vm.name
+    if not re.search(event_matched_opened, ret_output):
+        test.fail("Can not find matched event:%s from event output: %s" % (event_matched_opened, ret_output))
+    event_matched_closed = r"event 'tray-change' for domain '%s' disk .*closed" % vm.name
+    if not re.search(event_matched_closed, ret_output):
+        test.fail("Can not find matched event:%s from event output: %s" % (event_matched_closed, ret_output))
+
+    virsh.detach_disk(vm.name, device_target, " --live", ignore_status=False)
+    cdrom_vmxml = vm_xml.VMXML.new_from_dumpxml(vm.name)
+    cdrom_devices = cdrom_vmxml.get_disk_all_by_expr('device==cdrom')
+    if len(cdrom_devices) > 0:
+        test.fail("cdrom disk can not be detached successfully")
+
+
 def run(test, params, env):
     """
     Test attach cdrom device with option.
@@ -393,6 +521,8 @@ def run(test, params, env):
     error_msg = params.get("error_msg", "cannot use address type for device")
     expected_fails_msg.append(error_msg)
 
+    libvirt_version.is_libvirt_feature_supported(params)
+
     device_obj = None
     # Back up xml file.
     if vm.is_alive():
@@ -411,7 +541,8 @@ def run(test, params, env):
         elif backend_device in ["iso_cdrom_backend", "twice_iso_cdrom_backend",
                                 "requisite_startuppolicy_cdrom_backend",
                                 "copy_on_read_not_compatible_with_readonly",
-                                "change_startuppolicy_cdrom_backend"]:
+                                "change_startuppolicy_cdrom_backend",
+                                "cdrom_reboot_reset_backend"]:
             device_obj = create_iso_cdrom_disk(params)
         elif backend_device == "open_tray_cdrom_backend":
             device_obj = create_open_tray_cdrom_disk(params)
@@ -432,6 +563,12 @@ def run(test, params, env):
             vmxml.sync()
         vm.start()
         vm.wait_for_login().close()
+        if backend_device == "scsi_cdrom_hot_eject_backend":
+            device_obj = create_open_tray_cdrom_disk(params)
+            virsh.attach_device(vm_name, device_obj, flagstr="--live", debug=True)
+            iso_file_path = params.get("virt_disk_device_source")
+            # Check cdrom has been filled with iso file
+            check_source_in_cdrom_device(vm, iso_file_path, test)
         if status_error:
             if hotplug:
                 LOG.info("attaching devices, expecting error...")
@@ -473,6 +610,10 @@ def run(test, params, env):
             check_change_startuppolicy_cdrom_backend(vm, params, device_obj, test)
         elif backend_device == "libvirtd_not_crash_on_domstats":
             check_libvirtd_not_crash_on_domstats(vm, old_pid_of_libvirtd, test)
+        elif backend_device == "cdrom_reboot_reset_backend":
+            check_cdrom_reboot_reset(vm, params, test)
+        elif backend_device == "scsi_cdrom_hot_eject_backend":
+            check_scsi_cdrom_hot_eject(vm, params, test)
     finally:
         # Recover VM.
         if vm.is_alive():

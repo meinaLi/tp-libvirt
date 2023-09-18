@@ -10,6 +10,7 @@ import shutil
 from virttest import data_dir
 from virttest import virsh
 from virttest import utils_misc
+from virttest import libvirt_version
 from virttest.libvirt_xml import vm_xml
 from virttest.libvirt_xml.devices.watchdog import Watchdog
 from virttest.libvirt_xml.devices.controller import Controller
@@ -38,6 +39,9 @@ def run(test, params, env):
         :param model: action when watchdog triggered
         """
         watchdog_device = model
+        if model == "itco":
+            watchdog_device = "ICH9-LPC.noreboot=off"
+
         if action == "dump":
             watchdog_action = "watchdog-action pause"
         else:
@@ -56,7 +60,7 @@ def run(test, params, env):
             try_modprobe(watchdog_dev, session, test)
             logging.info("dmesg watchdog messages: %s" % session.cmd("dmesg | grep -i %s" % model,
                                                                      ignore_all_errors=True))
-            session.cmd("lsmod | grep %s" % model)
+            session.cmd("lsmod | grep -i %s" % model)
             session.cmd("echo 1 > /dev/watchdog")
         except aexpect.ShellCmdError as e:
             session.close()
@@ -177,6 +181,8 @@ def run(test, params, env):
     hotplug_test = params.get("hotplug_test") == "yes"
     hotunplug_test = params.get("hotunplug_test") == "yes"
     machine_type = params.get("machine_type")
+
+    libvirt_version.is_libvirt_feature_supported(params)
 
     if machine_type == "q35" and model == "ib700":
         test.cancel("ib700wdt watchdog device is not supported "

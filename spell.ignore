@@ -13,6 +13,7 @@ afeter
 aggregater
 agregators
 alignsize
+allocpages
 amd
 analyse
 Analyse
@@ -164,6 +165,7 @@ cssid
 ctrl
 currentvcpu
 curvcpu
+CVE
 dac
 DAC
 darget
@@ -252,6 +254,7 @@ dpdkvhostuserclient
 dst
 du
 dumpxml
+dzheng
 ebtables
 efi
 eg
@@ -418,6 +421,7 @@ initramfs
 initscripts
 inodes
 inpect
+installable
 installroot
 invtsc
 inx
@@ -475,6 +479,7 @@ keywrap
 KiB
 kickstart
 kms
+kubevirt
 ksm
 KSM
 KVER
@@ -550,6 +555,7 @@ maxdowntime
 maximumvcpu
 maxmem
 Maxmem
+maxphysaddr
 maxvcpu
 maxvcpus
 mb
@@ -564,6 +570,7 @@ mdev
 mdevctl
 mellanox
 mem
+mems
 memballoon
 memhog
 meminfo
@@ -613,6 +620,8 @@ multipathd
 multiqueue
 multitimes
 namespace
+Nannan
+nanli
 nano
 nat
 nbd
@@ -713,6 +722,7 @@ parsers
 partnum
 partprobe
 parttype
+passt
 passthrough
 Passthrough
 passwd
@@ -766,6 +776,7 @@ prepended
 priveledge
 proc
 propoer
+prot
 proto
 Prudhvi
 ps
@@ -894,8 +905,10 @@ SMT
 snaplist
 snapname
 snapshotname
+socat
 socketscount
 sourse
+sp
 Sparsify
 sparsing
 spasified
@@ -967,6 +980,7 @@ systemctl
 systemd
 systemlink
 tach
+taskset
 targetdev
 targetiso
 tartget
@@ -990,6 +1004,7 @@ tgtd
 there're
 thp
 threadcount
+threadid
 threadpool
 timedatectl
 timestamp
@@ -1197,8 +1212,11 @@ Yalan
 yalzhang
 yyyy
 Zhang
+Zheng
 stressapptest
 calc
 domdirtyrate
 hwrng
 buitin
+Meina
+meili

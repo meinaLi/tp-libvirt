@@ -5,7 +5,9 @@ import signal                                        # pylint: disable=W0611
 import time
 
 from avocado.core import exceptions
+from avocado.utils import process
 
+from virttest import remote
 from virttest import virsh                           # pylint: disable=W0611
 from virttest import utils_misc                      # pylint: disable=W0611
 from virttest import utils_libvirtd                  # pylint: disable=W0611
@@ -19,6 +21,7 @@ from virttest.utils_libvirt import libvirt_network   # pylint: disable=W0611
 from virttest.utils_libvirt import libvirt_service   # pylint: disable=W0611
 from virttest.utils_test import libvirt_domjobinfo   # pylint: disable=W0611
 from virttest.utils_test import libvirt
+from virttest.staging import service
 
 from provider.migration import base_steps            # pylint: disable=W0611
 
@@ -414,18 +417,37 @@ def check_domjobinfo_during_mig(params):
     libvirt_domjobinfo.check_domjobinfo(vm, params)
 
 
-def set_bandwidth_during_mig(params):
+def check_domjobinfo_precopy(params):
     """
-    Set bandwidth during migration
+    During precopy phase of live migration, check domjobinfo
 
-    :param params: dict, get vm name and compared value
+    :param params: dict, get vm object
+    """
+    vm = params.get("vm_obj")
+    precopy_bandwidth = params.get("precopy_bandwidth")
+    compare_to_value = params.get("compare_to_value")
+
+    params.update({"compare_to_value": precopy_bandwidth})
+    libvirt_domjobinfo.check_domjobinfo(vm, params)
+
+
+def set_bandwidth(params):
+    """
+    Set bandwidth
+
+    :param params: dict, get vm name, postcopy bandwidth and precopy bandwidth
     """
     vm_name = params.get("migrate_main_vm")
-    compared_value = params.get("compared_value")
+    postcopy_bandwidth = params.get("postcopy_bandwidth")
+    precopy_bandwidth = params.get("precopy_bandwidth")
 
     virsh_args = {"debug": True, "ignore_status": False}
-    virsh.migrate_setspeed(vm_name, compared_value, **virsh_args)
-    virsh.migrate_getspeed(vm_name, debug=True)
+    if postcopy_bandwidth:
+        virsh.migrate_setspeed(vm_name, postcopy_bandwidth, extra="--postcopy", **virsh_args)
+        virsh.migrate_getspeed(vm_name, extra="--postcopy", debug=True)
+    if precopy_bandwidth:
+        virsh.migrate_setspeed(vm_name, precopy_bandwidth, **virsh_args)
+        virsh.migrate_getspeed(vm_name, debug=True)
 
 
 def check_vm_status_during_mig(params):
@@ -489,14 +511,13 @@ def do_common_check(params):
     migration_obj = params.get("migration_obj")
     vm_name = params.get("main_vm")
 
-    if migration_options == "migrateuri":
-        libvirt_network.check_established(params)
     if migration_options == "postcopy_bandwidth" and second_bandwidth:
         libvirt_domjobinfo.check_domjobinfo(migration_obj.vm, params)
 
     # check job info when migration is in paused status
-    expected_dict = {"Job type": "Unbounded", "Operation": "Outgoing migration"}
-    libvirt_monitor.check_domjobinfo(vm_name, expected_dict)
+    expected_domjobinfo = '{"src_items": {"str_items": {"Job type": "Unbounded", "Operation": "Outgoing migration"}}}'
+    params.update({"expected_domjobinfo": expected_domjobinfo})
+    libvirt_monitor.check_domjobinfo_output(params)
 
     # check domain state with reason
     check_vm_state(params)
@@ -620,3 +641,88 @@ def wait_for_unattended_mig(params):
     if remote_virsh_session and expected_event_target:
         dest_output = remote_virsh_session.get_stripped_output()
         check_output(dest_output, eval(expected_event_target), migration_obj.test)
+
+
+def destroy_dest_vm(params):
+    """
+    Destroy vm on dest
+
+    :param params: dict, get vm name and dest uri
+    """
+    dest_uri = params.get("virsh_migrate_desturi")
+    vm_name = params.get("main_vm")
+    virsh.destroy(vm_name, ignore_status=False, debug=True, uri=dest_uri)
+
+
+def check_NM(params, remote_host=False):
+    """
+    Check NetworkManager service
+
+    :param params: dictionary with the test parameter
+    :param remote_host: if True, will check the NetworkManager service of target host
+    :return: if True, NetworkManager service exists already
+    """
+    cmd = "rpm -q NetworkManager"
+    if remote_host:
+        ret = remote.run_remote_cmd(cmd, params, ignore_status=False)
+    else:
+        ret = process.run(cmd, ignore_status=False, shell=True)
+    if ret.exit_status:
+        return False
+    return True
+
+
+def get_NM_service(params=None, remote_host=False):
+    """
+    Get NetworkManager service object
+
+    :param params: dictionary with the test parameter
+    :param remote_host: if True, will get the NetworkManager service of target host
+    :return: NetworkManager service object
+    """
+    if remote_host:
+        server_ip = params.get("server_ip")
+        server_user = params.get("server_user", "root")
+        server_pwd = params.get("server_pwd")
+        remote_runner = remote.RemoteRunner(host=server_ip,
+                                            username=server_user,
+                                            password=server_pwd)
+        runner = remote_runner.run
+    else:
+        runner = process.run
+    return service.Factory.create_service("NetworkManager", run=runner)
+
+
+def do_domjobabort(params):
+    """
+    Domain job abort during migration
+
+    :param params: dict, get vm name, dest uri, error message and postcopy option
+    """
+    dest_uri = params.get("virsh_migrate_desturi")
+    vm_name = params.get("main_vm")
+    domjobabort_err_msg = params.get("domjobabort_err_msg")
+    postcopy_options = params.get("postcopy_options")
+
+    if postcopy_options:
+        ret = virsh.domjobabort(vm_name, option="--postcopy", debug=True, uri=dest_uri)
+    else:
+        ret = virsh.domjobabort(vm_name, debug=True, uri=dest_uri)
+    libvirt.check_result(ret, expected_fails=domjobabort_err_msg, check_both_on_error=True)
+
+
+def get_vm_serial_session_on_dest(params):
+    """
+    Get vm serial session on dest
+
+    :param params: dictionary with the test parameter, get dest uri and migration object
+    """
+    desturi = params.get("virsh_migrate_desturi")
+    migration_obj = params.get("migration_obj")
+
+    backup_uri, migration_obj.vm.connect_uri = migration_obj.vm.connect_uri, desturi
+    migration_obj.vm.cleanup_serial_console()
+    migration_obj.vm.create_serial_console()
+    vm_session = migration_obj.vm.wait_for_serial_login(timeout=120)
+    params.update({"vm_session": vm_session})
+    migration_obj.vm.connect_uri = backup_uri
