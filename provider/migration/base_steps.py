@@ -275,7 +275,6 @@ class MigrationBase(object):
         dest_uri = self.params.get("virsh_migrate_desturi")
         vm_name = self.params.get("migrate_main_vm")
 
-        time.sleep(25)
         func_returns = dict(self.migration_test.func_ret)
         self.migration_test.func_ret.clear()
         self.test.log.debug("Migration returns function results:%s", func_returns)
@@ -365,11 +364,12 @@ class MigrationBase(object):
         :param remote_str_in_log: True if the remote file should include the given string,
                                   otherwise, False
         """
-        check_str_local_log = self.params.get("check_str_local_log", "")
+        check_str_local_log = eval(self.params.get("check_str_local_log", "[]"))
         check_str_remote_log = self.params.get("check_str_remote_log", "")
         log_file = self.params.get("libvirtd_debug_file")
         if check_str_local_log:
-            libvirt.check_logfile(check_str_local_log, log_file, str_in_log=local_str_in_log)
+            for check_log in check_str_local_log:
+                libvirt.check_logfile(check_log, log_file, str_in_log=local_str_in_log)
         if check_str_remote_log:
             runner_on_target = None
             server_ip = self.params.get("server_ip")
@@ -402,6 +402,8 @@ class MigrationBase(object):
             firewall_cmd.add_port(port, 'tcp', permanent=True)
         else:
             firewall_cmd.remove_port(port, 'tcp', permanent=True)
+        # Wait for 2 seconds to make the firewall take effect
+        time.sleep(2)
         remote_session.close()
 
 

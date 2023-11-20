@@ -1,4 +1,7 @@
 import os
+import platform
+
+from virttest import libvirt_version
 from virttest import utils_net
 from virttest import virsh
 from virttest.libvirt_xml import vm_xml
@@ -27,6 +30,12 @@ def run(test, params, env):
         :params vmxml: the vm xml
         """
         vmxml.remove_all_device_by_type(device_type)
+        # For now, arm can not create USB controller automatically.
+        if device_type == "controller" and platform.machine() == 'aarch64':
+            usb_controller = Controller("controller")
+            usb_controller.type = "usb"
+            usb_controller.model = 'qemu-xhci'
+            vmxml.add_device(usb_controller)
         vmxml.sync()
         # Need to use shared memory for filesystem device
         if device_type == "filesystem":
@@ -122,6 +131,7 @@ def run(test, params, env):
     disk_image = params.get("disk_image", "")
     input_type = params.get("input_type")
     controller_type = params.get("controller_type")
+    libvirt_version.is_libvirt_feature_supported(params)
 
     vm = env.get_vm(vm_name)
     vmxml = vm_xml.VMXML.new_from_dumpxml(vm_name)

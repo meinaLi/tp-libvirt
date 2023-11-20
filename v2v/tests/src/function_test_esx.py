@@ -498,6 +498,17 @@ def run(test, params, env):
             else:
                 test.fail('%s of rhsrvany.exe is not correct' % key)
 
+    def verify_certificate(certs_src_dir, certs_dest_dir, vcenter_fdqn, vcenter_ip):
+        process.run('yum install ca-certificates -y | update-ca-trust enable',  shell=True)
+        mount_cert_dir = utils_v2v.v2v_mount(certs_src_dir, 'certs_src_dir')
+        if not os.path.exists(certs_dest_dir):
+            os.makedirs(certs_dest_dir)
+        process.run('scp -r %s/* %s' % (mount_cert_dir, certs_dest_dir), shell=True)
+        process.run('umount %s' % mount_cert_dir, shell=True)
+        process.run('update-ca-trust extract', shell=True)
+        with open('/etc/hosts', "w") as f:
+            f.write('%s %s' % (vcenter_ip, vcenter_fdqn))
+
     def check_result(result, status_error):
         """
         Check virt-v2v command result
@@ -620,6 +631,12 @@ def run(test, params, env):
             V2V_FSTRIM_SUCESS_VER = "[virt-v2v-1.45.1-1.el9,)"
             if utils_v2v.multiple_versions_compare(V2V_FSTRIM_SUCESS_VER):
                 params.update({'expect_msg': None})
+        if 'large_disk' in checkpoint:
+            time_info = re.search(r'.*\d.*Finishing.*off', output).group(0)
+            usetime = re.search(r'\d+\.\d+', str(time_info)).group(0).split('.')[0]
+            LOG.info('use time is %s' % usetime)
+            if int(usetime) > 300:
+                test.fail("conversion time is too long, please check v2v performance")
         # Log checking
         log_check = utils_v2v.check_log(params, output)
         if log_check:
@@ -866,18 +883,27 @@ def run(test, params, env):
             luks_keys = params_get(params, 'luks_keys', '').split(':')[-1]
             v2v_params['v2v_opts'] += ' ' + "$(seq -f '--key /dev/sda%%g:key:%s' 200)" % luks_keys
 
+        virsh_dargs = {'uri': remote_uri, 'remote_ip': remote_host,
+                       'remote_user': 'root', 'remote_pwd': vpx_passwd,
+                       'auto_close': True,
+                       'debug': True}
+        remote_virsh = virsh.VirshPersistent(**virsh_dargs)
+        raw_dumpxml = remote_virsh.dumpxml(vm_name)
+        remote_virsh.close_session()
+        if 'cpu_topology' in checkpoint:
+            res_cpu_topology = ET.fromstring(raw_dumpxml.stdout_text).find(".//cpu/topology")
+            if res_cpu_topology is None:
+                test.error("Not found cpu topology")
+            params['msg_content_yes'] += '<rasd:num_of_sockets>' + res_cpu_topology.get('sockets') + '%'
+            params['msg_content_yes'] += '<rasd:cpu_per_socket>' + res_cpu_topology.get('cores') + '%'
+            params['msg_content_yes'] += '<rasd:threads_per_cpu>' + res_cpu_topology.get('threads')
         if 'empty_cdrom' in checkpoint:
-            virsh_dargs = {'uri': remote_uri, 'remote_ip': remote_host,
-                           'remote_user': 'root', 'remote_pwd': vpx_passwd,
-                           'auto_close': True,
-                           'debug': True}
-            remote_virsh = virsh.VirshPersistent(**virsh_dargs)
-            v2v_result = remote_virsh.dumpxml(vm_name)
-            remote_virsh.close_session()
+            v2v_result = raw_dumpxml
         else:
             if 'exist_uuid' in checkpoint:
                 auto_clean = False
             if checkpoint[0] in [
+                'verify_certificate',
                 'mismatched_uuid',
                 'no_uuid',
                 'invalid_source',
@@ -922,8 +948,15 @@ def run(test, params, env):
             if params.get('invalid_esx_hostname'):
                 new_cmd = v2v_result.replace(
                     esxi_host, params.get('invalid_esx_hostname'))
+        if 'verify_certificate' in checkpoint:
+            certs_src_dir = params.get('certs_src_dir')
+            certs_dest_dir = params.get('certs_dest_dir')
+            vcenter_fdqn = params.get('vcenter_fdqn')
+            verify_certificate(certs_src_dir, certs_dest_dir, vcenter_fdqn, vpx_hostname)
+            new_cmd = v2v_result.replace('/?no_verify=1', '').replace(vpx_hostname, vcenter_fdqn)
 
         if checkpoint[0] in [
+            'verify_certificate',
             'mismatched_uuid',
             'no_uuid',
             'invalid_source',
